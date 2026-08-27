@@ -26,4 +26,4 @@ Deploy order: sieve → silo → cellar → percolator → mochaPot → ristrett
 
 ## Secrets
 
-Secrets are encrypted at rest with [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age) and committed directly into `secrets/` — safe to store anywhere in ciphertext form. The age private key itself lives outside this repo entirely (`/etc/purrbrews/age/keys.txt` on each node that needs to decrypt) and is never committed under any circumstance.
+Secrets are encrypted at rest with [SOPS](https://github.com/getsops/sops) + [age](https://github.com/FiloSottile/age) and committed directly into `secrets/` — safe to store anywhere in ciphertext form. The age private key itself lives outside this repo entirely and is never committed under any circumstance.
