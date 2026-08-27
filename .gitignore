@@ -1,0 +1,11 @@
+# Claude collaboration workspace — session docs/scripts, not tracked project code.
+claude/
+
+# secrets/ holds only SOPS-encrypted ciphertext (*.sops.yaml) — safe to commit,
+# hence the !secrets/** override below. Anything actually unencrypted (raw
+# keys, local-only config) must live OUTSIDE this directory entirely — see
+# /etc/purrbrews/age for the age private key — not just be gitignored here,
+# since an override further down or a forced `add -f` would defeat that.
+*.env.local
+*.key
+!secrets/**

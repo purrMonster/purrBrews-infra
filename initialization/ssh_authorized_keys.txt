@@ -1,0 +1,10 @@
+# One SSH public key per line. Blank lines and lines starting with '#' are
+# ignored. This file must sit next to purrbrews-init.sh (or point
+# $PURRBREWS_SSH_KEYS_FILE at wherever you move it).
+#
+# To add a new key later (e.g. for americano): append it below and re-run
+# purrbrews-init.sh on whichever node(s) need it — already-installed keys
+# are left alone.
+
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBCH76cfSXBZeOKvjkb28+GW2+wtD55W4bnT7dr8haS8 jyotirmoyc@roastery
+
