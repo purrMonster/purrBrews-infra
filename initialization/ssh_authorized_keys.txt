@@ -5,6 +5,7 @@
 # To add a new key later (e.g. for americano): append it below and re-run
 # purrbrews-init.sh on whichever node(s) need it — already-installed keys
 # are left alone.
+#Sample below
 
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBCH76cfSXBZeOKvjkb28+GW2+wtD55W4bnT7dr8haS8 jyotirmoyc@roastery
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBCH76cfSXBZeOKvjkb28+GW2+wtD55W4bnT7dr8haS8 penguin@roastery
 
