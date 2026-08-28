@@ -2,14 +2,20 @@
 #
 # purrbrews-init.sh — base node initialization for Project PurrBrews
 #
-# Targets: sieve, silo, cellar (Lenovo ThinkCentre M710Qs, Debian 13 "trixie")
-# Covers WBS 18.1 (Pre-deployment): base hardening (SSH keys, updates, static
-# IP), Docker + Compose, PROJECT_DIR/DATA_DIR/MEDIA_DIR + root .env, cloning
-# the purrbrews-infra repo (see "Remote repo URL sources" below), and the
-# age keypair (sieve only, once).
+# Targets: sieve, silo, cellar, percolator, mochaPot — all Debian 13 "trixie"
+# x86_64 boxes. Hardware is mixed (sieve/silo/cellar are Lenovo ThinkCentre
+# M710Qs; percolator is a bare i5 7th-gen laptop board; mochaPot is an HP
+# X360 Pavilion laptop running as a touchscreen kiosk), but every step below
+# is generic OS-level provisioning that doesn't care which of those it's on
+# — the one hardware-specific wrinkle is lid-switch behavior, handled by
+# step_lid_switch() (see the note there).
+# Covers WBS 18.1 (Pre-deployment): base hardening (SSH keys, updates,
+# static IP, lid-switch), Docker + Compose, PROJECT_DIR/DATA_DIR/MEDIA_DIR +
+# root .env, cloning the purrbrews-infra repo (see "Remote repo URL
+# sources" below), and the age keypair (sieve only, once).
 #
 # Usage:
-#   sudo ./purrbrews-init.sh <sieve|silo|cellar> [--yes]
+#   sudo ./purrbrews-init.sh <sieve|silo|cellar|percolator|mochaPot> [--yes]
 #
 #   --yes   skip the confirmation prompt before applying the static IP
 #           change (useful if you're at the physical console, risky over
@@ -44,8 +50,10 @@ declare -A NODE_IP=(
   [cellar]=192.168.0.13
   [mochaPot]=192.168.0.14
 )
-# Nodes this script actually provisions (base OS layer per WBS 18.1).
-# percolator/mochaPot get their own base-OS step later — not this script.
+# Nodes this script provisions (base OS layer per WBS 18.1). All five —
+# every step here is generic Debian/systemd/Docker setup with no M710Q-
+# specific assumptions, so percolator and mochaPot (different hardware,
+# same OS layer) are in scope too rather than needing a separate script.
 SUPPORTED_NODES=(sieve silo cellar percolator mochaPot)
 
 GATEWAY="192.168.0.1"
@@ -402,6 +410,38 @@ EOF
   log "Static IP applied. Reconnect to $target_ip if this session drops."
 }
 
+step_lid_switch() {
+  log "Lid-switch behavior"
+
+  # sieve/silo/cellar are SFF desktops with no lid, so this is a harmless
+  # no-op there. It's load-bearing on mochaPot specifically: an HP X360
+  # laptop running as an unattended, headless-most-of-the-time touchscreen
+  # kiosk will otherwise suspend the instant the lid closes (systemd-logind's
+  # default), taking every container on it down with it. percolator is a
+  # bare laptop board (no lid hardware to trigger this), but applying it
+  # uniformly to every node is simpler than a per-node exception and costs
+  # nothing on boxes without a lid.
+  local logind_conf="/etc/systemd/logind.conf"
+  local backup="/etc/systemd/logind.conf.pre-purrbrews.bak"
+  [[ -f "$backup" ]] || cp "$logind_conf" "$backup"
+
+  set_logind_option() {
+    local key="$1" value="$2"
+    if grep -qE "^\s*#?\s*${key}\s*=" "$logind_conf"; then
+      sed -i -E "s|^\s*#?\s*(${key})\s*=.*|\1=${value}|" "$logind_conf"
+    else
+      echo "${key}=${value}" >> "$logind_conf"
+    fi
+  }
+
+  set_logind_option "HandleLidSwitch" "ignore"
+  set_logind_option "HandleLidSwitchExternalPower" "ignore"
+  set_logind_option "HandleLidSwitchDocked" "ignore"
+
+  systemctl restart systemd-logind
+  log "Lid-close will no longer suspend this node."
+}
+
 step_docker() {
   log "Docker + Compose"
 
@@ -586,6 +626,7 @@ step_apt_base
 step_admin_user
 step_ssh_hardening
 step_static_ip
+step_lid_switch
 step_docker
 step_git_repo
 step_directories

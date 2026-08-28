@@ -8,4 +8,5 @@ claude/
 # since an override further down or a forced `add -f` would defeat that.
 *.env.local
 *.key
+*.txt
 !secrets/**

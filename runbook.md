@@ -281,3 +281,13 @@ Decided: `scripts/purrbrews-commit.{sh,ps1}` no longer touches `runbook.md` at a
 **Not yet done — new backlog item:** design and build the nightly job itself (added above). Open questions for that, not yet decided: which model, where it runs (americano/roastery vs. a fleet node once one exists), what "the day's commits" means as input (a `git log` range, one prompt per repo per night?), and whether it appends automatically or drafts an entry for review first.
 
 ---
+
+## 2026-08-28 — `purrbrews-init.sh` widened to cover percolator and mochaPot
+
+**What changed:** `SUPPORTED_NODES`/`NODE_IP` already listed `percolator` and `mochaPot`, but the header docstring, usage line, and a comment right above `SUPPORTED_NODES` all said this script was sieve/silo/cellar-only ("percolator/mochaPot get their own base-OS step later — not this script") — so the guard would have silently let you run it against percolator/mochaPot anyway, contradicting the stated intent. Reviewed whether the script is actually hardware-generic enough to own base-OS provisioning for all five nodes, concluded yes, and updated the script to match: header/usage now list all five nodes, and the stale comment is fixed.
+
+**New step — lid-switch handling:** the one real hardware-specific gap found during the review. mochaPot is an HP X360 Pavilion running as an unattended touchscreen kiosk — without intervention, systemd-logind suspends the machine the instant the lid closes, taking every container down with it. Added `step_lid_switch()` (sets `HandleLidSwitch`/`HandleLidSwitchExternalPower`/`HandleLidSwitchDocked=ignore` in `/etc/systemd/logind.conf`, idempotent, backs up the original file first restart-time). Applied to all five nodes rather than gated per-node — it's a no-op on sieve/silo/cellar (no lid) and on percolator (bare laptop board, no lid hardware), so a uniform step is simpler than a conditional one.
+
+**Not yet done:** actually running the widened script on percolator/mochaPot (still queued behind sieve → silo → cellar in deploy order per the runbook backlog and README). No other hardware-specific gaps were identified for percolator/mochaPot during this pass, but neither has been provisioned yet to confirm that in practice.
+
+---
