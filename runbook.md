@@ -7,8 +7,8 @@ Living operational reference for Project PurrBrews. Entries are dated as decisio
 Pulled up from the dated entries below so nothing gets lost in the log. Check items off (or just delete the line) as they're done — leave a dated entry below for anything worth remembering *why* about.
 
 - [x] Confirm physical cabling matches the floor plan (Section 0.12) — done 2026-08-27
-- [ ] Run `purrbrews-init.sh` for real on sieve, silo, cellar
-- [ ] Generate + distribute the age keypair (on sieve, first)
+- [x] Run `purrbrews-init.sh` for real on sieve, silo, cellar — done 2026-08-28 per User Penguin, and extended to all five (sieve, silo, cellar, percolator, mochaPot) rather than just the original three. Not independently verified from this session (no SSH access to the fleet) — taken on report.
+- [x] Generate + distribute the age keypair (on sieve, first) — exists on sieve per User Penguin (2026-08-28). Not yet used, though: sieve's own app-stack secrets (2026-08-28 entry below) ended up going a different route entirely — see that entry for why, and the new backlog item below for what this means for silo/cellar/percolator/mochaPot.
 - [ ] Roastery WoL: BIOS Wake-on-LAN enable, ErP/EuP disable, Windows Fast Startup disable
 - [ ] `wakeonlan` trigger on silo once it's live, exposed remotely (Homepage/n8n)
 - [ ] `git init` / `add` / `commit` / `remote add origin` / `push` for `purrBrews-infra` on roastery
@@ -17,6 +17,12 @@ Pulled up from the dated entries below so nothing gets lost in the log. Check it
 - [ ] Pull `llama3.2:3b` on americano/roastery (`ollama pull llama3.2:3b`) and confirm `ollama serve` is reachable at `localhost:11434`, so `scripts/purrbrews-commit.{sh,ps1}` has something to talk to — this is now the script's default model, chosen for speed (see 2026-08-27 entry)
 - [ ] Dry-run `scripts/purrbrews-commit.{sh,ps1}` at least once (`--dry-run`/`-DryRun`) with `llama3.2:3b` before trusting it unattended — confirm it's actually fast now, and that a 3B model's commit messages are good enough quality; bump to `--model qwen2.5:7b` if not
 - [ ] Build the nightly runbook-entry job — a stronger model, more context (a day's worth of commits, not one diff at a time), separate from `purrbrews-commit.{sh,ps1}` entirely (see 2026-08-27 entry)
+- [ ] Set up non-interactive git credentials for `barista` on each node (HTTPS + private GitHub repo needs a stored credential — `git config credential.helper store` after one manual authenticated pull with a PAT, or switch the remote to SSH with a read-only deploy key) — without this the new morning `git pull` cron (`step_cron_pull`) fails every run (see 2026-08-28 entry)
+- [ ] Confirm each node's timezone (`timedatectl`) once provisioned, so the `06:15` morning pull cron actually lands in the morning
+- [ ] On sieve: fill in `stacks/sieve/.env.local` (DOMAIN) and the two Cloudflare values (`traefik/secrets.env.local` CF_DNS_API_TOKEN, `cloudflared/secrets.env.local` TUNNEL_TOKEN), then `./generate-secrets.sh && ./render-configs.sh` and bring the six apps up in order — see `stacks/sieve/README.md` (see 2026-08-28 entry)
+- [ ] Check current image tags for pihole/lldap/authelia/traefik/headscale/cloudflared before first deploy on sieve — the versions pinned in this session's build (2026-08-28) were current *that day*; several months may have passed by actual deploy time
+- [ ] Decide the secrets approach for silo/cellar/percolator/mochaPot's app stacks: SOPS+age as originally planned (Section 19.3, key already exists on sieve), or the plaintext-generated-at-runtime pattern used for sieve's own stack instead (2026-08-28 entry) — currently only decided for sieve, not the rest of the fleet
+- [ ] Route lldap's admin UI (sieve, port 17170) through Traefik + Authelia instead of its current direct host-port exposure
 - [ ] Emergency access USB — deferred, no target date set:
   - [ ] Generate emergency SSH keypair on roastery (`ssh-keygen`, passphrase-protected), send Claude the `.pub` to add to `ssh_authorized_keys.txt`
   - [ ] Decide number/location of physical USB copies
@@ -289,5 +295,54 @@ Decided: `scripts/purrbrews-commit.{sh,ps1}` no longer touches `runbook.md` at a
 **New step — lid-switch handling:** the one real hardware-specific gap found during the review. mochaPot is an HP X360 Pavilion running as an unattended touchscreen kiosk — without intervention, systemd-logind suspends the machine the instant the lid closes, taking every container down with it. Added `step_lid_switch()` (sets `HandleLidSwitch`/`HandleLidSwitchExternalPower`/`HandleLidSwitchDocked=ignore` in `/etc/systemd/logind.conf`, idempotent, backs up the original file first restart-time). Applied to all five nodes rather than gated per-node — it's a no-op on sieve/silo/cellar (no lid) and on percolator (bare laptop board, no lid hardware), so a uniform step is simpler than a conditional one.
 
 **Not yet done:** actually running the widened script on percolator/mochaPot (still queued behind sieve → silo → cellar in deploy order per the runbook backlog and README). No other hardware-specific gaps were identified for percolator/mochaPot during this pass, but neither has been provisioned yet to confirm that in practice.
+
+---
+
+## 2026-08-28 (cont.) — Morning `git pull` cron on every node
+
+**Decided:** every fleet node keeps its local `purrbrews-infra` checkout fresh on its own, every morning, via a plain `git pull --ff-only` — no push, no merge/rebase fallback. This is deliberately narrow in scope: it is *not* the AI-assisted nightly runbook job from the 2026-08-27 backlog item (that's still undesigned/unbuilt — different job, different cadence, different purpose). This is just "don't let a node's checkout silently drift stale."
+
+**What was built:**
+
+- `scripts/purrbrews-pull.sh` — the actual pull. Never prompts (`GIT_TERMINAL_PROMPT=0` — a hung cron job is worse than a failed one), `--ff-only` (refuses to auto-merge a diverged tree, logs a failure instead), logs every run (timestamped, OK/FAILED) to `/var/log/purrbrews/pull.log`.
+- `step_cron_pull()` in `purrbrews-init.sh` — installs that script into `$OPS_USER`'s (`barista`'s) crontab, daily at `$CRON_PULL_HOUR:$CRON_PULL_MINUTE` (default `06:15`, both configurable in the script's config block; `ENABLE_CRON_PULL="false"` skips the step entirely). Re-running the init script updates the schedule in place (strips the old managed line by its comment marker, re-adds it) rather than stacking duplicate crontab entries — same idempotency pattern as the rest of the script. Added `cron` to the base `apt-get install` list since it isn't guaranteed present on a minimal Debian image. Wired into the main sequence right after `step_directories` (needs `$PROJECT_DIR` and the cloned `scripts/` to already exist).
+- Invoked as `bash <path>`, not by executing the file directly — so it doesn't depend on the executable bit surviving `git clone`/`pull`.
+
+**Known gap, called out loudly in both files:** the configured remote is an HTTPS GitHub URL to a *private* repo. `git pull` with no stored credential will fail every single run (by design — it fails fast rather than hanging on a password prompt), it just won't silently succeed either. Non-interactive auth (credential-helper store after one manual authenticated pull with a PAT, or an SSH remote + read-only deploy key) still needs to be set up per node before this cron actually does anything — added to the backlog above. Also added a backlog item to confirm each node's timezone once provisioned, since `06:15` is node-local time and "morning" only means that if the clock agrees.
+
+---
+
+## 2026-08-28 (cont.) — sieve's app stack: WBS 18.2 (Pi-hole → lldap → Authelia → Traefik → Headscale → Cloudflare Tunnel)
+
+**Status going in:** User Penguin reported all five fleet nodes (sieve, silo, cellar, percolator, mochaPot) now provisioned via `purrbrews-init.sh`, and the age keypair generated on sieve — both taken on report, not independently verified from this session (no SSH access to the fleet). Moved on to building sieve's actual application stack per WBS 18.2, which until now was six empty placeholder directories under `stacks/sieve/`.
+
+**Three decisions made before writing any config**, via direct question to User Penguin (the initiation doc specifies the architecture but not these specifics):
+
+1. **Domain:** a real one exists, but stays out of every tracked file — referenced only via `${DOMAIN}` from a gitignored `stacks/sieve/.env.local`. This matters more than usual here because the plan (Section 3 of this runbook) is for GitHub to eventually flip from private canonical remote to a *public* sanitized mirror — a hardcoded domain in a compose file would be a problem at that point, not just today.
+2. **Split-horizon DNS:** same public domain both ways (not a separate `*.internal` suffix) — LAN clients resolve `authelia.${DOMAIN}` etc. straight to the LAN IP of whichever node actually hosts it, external clients hit the same hostname via Cloudflare Tunnel. Matches what the initiation doc already called out as the intended architecture (Section 0.3).
+3. **Secrets:** *not* SOPS+age, despite Section 19.3 and the age key existing on sieve already. Decided instead: generate secrets locally on the node at setup time, keep them as plain gitignored files (covered by the repo's existing `*.env.local` rule), never commit anything — encrypted or not. **This decision is scoped to sieve's stack only** — added a backlog item above to decide whether it extends to silo/cellar/percolator/mochaPot too, or whether those go the originally-planned SOPS route instead. Also asked for, and applied throughout: one `docker-compose.yml` per app, not one big combined file per node — matches the six-folder layout the initiation doc's own Section 19.1 already specified.
+
+**What was built**, under `stacks/sieve/`:
+
+- One `docker-compose.yml` per app — `pihole/`, `lldap/`, `authelia/` (bundles its own Redis as a second service in the same file — Redis here is purely Authelia's session store with no independent lifecycle, and the initiation doc's own file-layout list never gave it a separate folder), `traefik/`, `headscale/`, `cloudflared/`.
+- `bootstrap-network.sh` — creates one shared external docker network (`sieve_proxy`) that traefik/authelia/redis/lldap/cloudflared all join, so they can reach each other by container name. Pi-hole runs on `network_mode: host` instead (needs real LAN visibility for DNS/DHCP), so it's not on this network.
+- `generate-secrets.sh` — idempotent (only fills in a key that doesn't already exist), generates every secret it *can* generate (`openssl rand`) straight into each app's `secrets.env.local`. Mirrors lldap's generated admin password into Authelia's LDAP bind password rather than generating two inconsistent ones. Two values it can't generate — because they only exist inside a Cloudflare account (`CF_DNS_API_TOKEN` for Traefik's DNS-01 ACME challenge, `TUNNEL_TOKEN` for cloudflared) — get a loud `REPLACE_ME` placeholder instead of a silent gap.
+- `render-configs.sh` — every config that needs `${DOMAIN}` (Traefik's static/dynamic config, Authelia's config, Headscale's config, Pi-hole's split-horizon DNS entries) is authored as a tracked `*.template` file and rendered via `envsubst` into a gitignored real file. Keeps the domain out of git without needing a templating step per app. Added `gettext-base` (provides `envsubst`) to `purrbrews-init.sh`'s base package list for this.
+- `compose.sh` — thin wrapper (`./compose.sh <app> up -d`) that supplies the right `--env-file` flags (`.env.local` + that app's `secrets.env.local`) so nobody has to remember them by hand.
+- `README.md` — deploy order, first-time setup commands, where the two manual Cloudflare values come from, and a "known gaps" section (see below).
+
+**Architecture calls made without asking, documented in the README for correction:**
+
+- **Traefik gets a real cert via DNS-01 ACME** (Cloudflare DNS challenge), not a self-signed one — so LAN split-horizon access doesn't throw browser warnings. This is what `CF_DNS_API_TOKEN` is for.
+- **Cloudflare Tunnel is token-based and remotely-managed** — no local `config.yml`/`credentials.json` on sieve at all; hostname → origin routing is configured once in the Cloudflare Zero Trust dashboard instead, pointing at `http://traefik:80` (reached by container name over `sieve_proxy`, no host port needed for this). Simpler than the alternative and one fewer local secret file.
+- **Headscale's coordination endpoint is deliberately NOT behind Authelia's forward-auth** — tailscale clients register/sync against it directly and can't complete an interactive browser login; headscale's own pre-auth-key/invite flow is the access control there, not SSO.
+- **Authelia's `access_control` defaults to `one_factor` everywhere** for first bring-up (no TOTP enrollment required to get in the door), and uses the filesystem notifier (no SMTP dependency yet). Both flagged in the README as things to tighten once the basics are confirmed working.
+- **lldap's admin UI (port 17170) is directly host-published for now**, not yet routed through Traefik/Authelia — added to the backlog above as a follow-up.
+
+**Verified before delivery:** every shell script passes `bash -n`; every compose/template YAML parses; ran `generate-secrets.sh` → `render-configs.sh` end-to-end in an isolated copy (using a stand-in `envsubst`, since this session's sandbox couldn't reach its package mirror to install the real one) and confirmed the rendered output — domain substitution, and the lldap→Authelia password mirroring — came out correct; confirmed `generate-secrets.sh` is idempotent on a second run (no values changed).
+
+**Image tags** were pinned to what looked current as of 2026-08-28 (checked via web search this session): `pihole/pihole:2026.07.2`, `lldap/lldap:v0.6.3`, `authelia/authelia:4.39.20`, `traefik:v3.6`, `headscale/headscale:0.27.1`, `cloudflare/cloudflared:2026.1.2`. Flagged in the README and the backlog above to double-check before actually deploying, since real deploy time may be well after this date.
+
+**Not yet done:** all of it, actually — this is the code, not the deployment. Filling in `.env.local`/the two Cloudflare secrets and bringing the six apps up on sieve in order is the next real step (see backlog above and `stacks/sieve/README.md`).
 
 ---

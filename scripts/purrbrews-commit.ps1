@@ -126,7 +126,7 @@ if ($availableModels -and ($availableModels -notcontains $Model)) {
 # model -- a huge diff blows a local model's context window and produces a
 # useless summary anyway. The FULL diff is still what gets committed; only
 # what the model sees is capped. Tune to your model's context size.
-$MaxDiffChars = 12000
+$MaxDiffChars = 36000
 
 # ---------------------------------------------------------------------------
 # Stage everything, bail if there's nothing to do

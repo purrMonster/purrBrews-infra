@@ -1,0 +1,25 @@
+services:
+  headscale:
+    image: headscale/headscale:0.27.1
+    container_name: headscale
+    command: serve
+    networks:
+      - sieve_proxy
+    volumes:
+      - ./config/config.yaml:/etc/headscale/config.yaml:ro
+      - /srv/data/headscale:/var/lib/headscale
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=sieve_proxy"
+      - "traefik.http.routers.headscale.rule=Host(`headscale.${DOMAIN}`)"
+      - "traefik.http.routers.headscale.entrypoints=websecure"
+      - "traefik.http.services.headscale.loadbalancer.server.port=8080"
+      # Deliberately NO authelia middleware here: tailscale clients hit this
+      # endpoint directly to register/sync, and can't complete an
+      # interactive browser login. headscale's own pre-auth-key / user
+      # invite flow is the access control for this route, not Traefik/SSO.
+
+networks:
+  sieve_proxy:
+    external: true

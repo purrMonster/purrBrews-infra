@@ -1,0 +1,19 @@
+## Rendered by ../../render-configs.sh from this .template — edit the
+## .template, never the rendered dynamic.yml (it gets overwritten).
+##
+## File-provider routes live here; most app routes instead use Docker
+## labels (see e.g. authelia/docker-compose.yml) so they travel with their
+## own compose file. This is for Traefik's own dashboard, which has no
+## container of its own to hang labels off of.
+
+http:
+  routers:
+    traefik-dashboard:
+      rule: "Host(`traefik.${DOMAIN}`)"
+      entrypoints:
+        - websecure
+      service: api@internal
+      # Cross-provider reference: this middleware is defined via Docker
+      # labels on the authelia service, hence the @docker suffix.
+      middlewares:
+        - authelia@docker

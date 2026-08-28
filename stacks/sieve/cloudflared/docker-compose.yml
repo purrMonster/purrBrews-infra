@@ -1,0 +1,18 @@
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.1.2
+    container_name: cloudflared
+    # Token-based, remotely-managed tunnel: no local config.yml or
+    # credentials.json needed — hostname routing is configured once in the
+    # Cloudflare Zero Trust dashboard instead (see README.md). Simpler, and
+    # one fewer secret file to manage on this node.
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+    networks:
+      - sieve_proxy
+    restart: unless-stopped
+
+networks:
+  sieve_proxy:
+    external: true

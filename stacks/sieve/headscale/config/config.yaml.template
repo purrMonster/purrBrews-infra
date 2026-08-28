@@ -1,0 +1,38 @@
+## Rendered by ../../render-configs.sh from this .template — edit the
+## .template, never the rendered config.yaml (it gets overwritten).
+## Trimmed to essentials — see https://headscale.net for the full option
+## reference if you need DERP, OIDC, or ACL policy support later.
+
+server_url: https://headscale.${DOMAIN}
+listen_addr: 0.0.0.0:8080
+metrics_listen_addr: 127.0.0.1:9090
+grpc_listen_addr: 0.0.0.0:50443
+grpc_allow_insecure: false
+
+private_key_path: /var/lib/headscale/private.key
+noise:
+  private_key_path: /var/lib/headscale/noise_private.key
+
+database:
+  type: sqlite
+  sqlite:
+    path: /var/lib/headscale/db.sqlite
+
+derp:
+  server:
+    enabled: false
+  urls:
+    - https://controlplane.tailscale.com/derpmap/default
+  auto_update_enabled: true
+  update_frequency: 24h
+
+dns:
+  magic_dns: true
+  base_domain: ts.${DOMAIN}
+  nameservers:
+    global:
+      - 1.1.1.1
+      - 1.0.0.1
+
+log:
+  level: info

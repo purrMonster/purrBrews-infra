@@ -1,0 +1,25 @@
+services:
+  traefik:
+    image: traefik:v3.6
+    container_name: traefik
+    networks:
+      - sieve_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+    volumes:
+      # Docker socket access is how Traefik discovers labeled containers —
+      # standard for this pattern, but worth knowing it's there.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - /srv/data/traefik/letsencrypt:/letsencrypt
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+
+networks:
+  sieve_proxy:
+    external: true

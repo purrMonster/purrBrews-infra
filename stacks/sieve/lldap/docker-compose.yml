@@ -1,0 +1,26 @@
+services:
+  lldap:
+    image: lldap/lldap:v0.6.3
+    container_name: lldap
+    networks:
+      - sieve_proxy
+    ports:
+      # Admin web UI, published directly for now (no Traefik/Authelia in
+      # front of it yet) — reachable at http://<sieve LAN IP>:17170 until
+      # split-horizon DNS + a Traefik route are wired up for it.
+      - "17170:17170"
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      LLDAP_JWT_SECRET: ${LLDAP_JWT_SECRET}
+      LLDAP_KEY_SEED: ${LLDAP_KEY_SEED}
+      # Arbitrary internal namespace — does NOT need to match your real
+      # domain, it's just LDAP's own naming convention.
+      LLDAP_LDAP_BASE_DN: dc=purrbrews,dc=internal
+      LLDAP_LDAP_USER_PASS: ${LLDAP_ADMIN_PASSWORD}
+    volumes:
+      - /srv/data/lldap:/data
+    restart: unless-stopped
+
+networks:
+  sieve_proxy:
+    external: true

@@ -1,0 +1,15 @@
+# purrbrews — split-horizon entries for sieve-hosted services.
+# Rendered by ../../render-configs.sh from this .template — do not edit the
+# rendered .conf directly, it gets overwritten every time that runs.
+#
+# Add one address= line per sieve-hosted subdomain as you add more. Services
+# that end up living on percolator/mochaPot later get their OWN entries,
+# pointing at THAT node's LAN IP — sieve's Traefik only fronts the external
+# Cloudflare Tunnel, per the hybrid split-horizon design (runbook, WBS 18.2).
+# dnsmasq itself doesn't do env-var expansion, which is why this has to be
+# rendered rather than mounted straight into the container.
+
+address=/pihole.${DOMAIN}/${SIEVE_LAN_IP}
+address=/authelia.${DOMAIN}/${SIEVE_LAN_IP}
+address=/traefik.${DOMAIN}/${SIEVE_LAN_IP}
+address=/headscale.${DOMAIN}/${SIEVE_LAN_IP}

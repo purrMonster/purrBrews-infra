@@ -1,0 +1,20 @@
+services:
+  pihole:
+    image: pihole/pihole:2026.07.2
+    container_name: pihole
+    # Host networking, deliberately: Pi-hole needs to see real LAN traffic
+    # for DNS (port 53) and, if you enable it later, DHCP broadcasts —
+    # neither works reliably from behind the docker bridge.
+    network_mode: host
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      WEBPASSWORD: ${PIHOLE_WEBPASSWORD}
+      DNSMASQ_LISTENING: all
+    volumes:
+      - /srv/data/pihole/etc-pihole:/etc/pihole
+      - /srv/data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
+      - ./custom-dns/05-purrbrews-split-horizon.conf:/etc/dnsmasq.d/05-purrbrews-split-horizon.conf:ro
+    restart: unless-stopped
+    # DHCP is off by default here. Turn it on later via the admin UI
+    # (Settings -> DHCP) only after confirming the router's own DHCP
+    # server is disabled — two DHCP servers on one LAN causes real chaos.

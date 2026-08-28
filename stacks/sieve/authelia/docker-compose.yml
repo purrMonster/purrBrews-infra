@@ -1,0 +1,43 @@
+services:
+  # Authelia's dedicated Redis (session store) — bundled here rather than
+  # given its own top-level stacks/sieve/redis/ folder, since it's purely
+  # an implementation detail of Authelia with no independent lifecycle.
+  # Per-app DB isolation is still honored: this Redis is Authelia's alone.
+  redis:
+    image: redis:7-alpine
+    container_name: authelia-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - sieve_proxy
+    volumes:
+      - /srv/data/authelia/redis:/data
+    restart: unless-stopped
+
+  authelia:
+    image: authelia/authelia:4.39.20
+    container_name: authelia
+    depends_on:
+      - redis
+    networks:
+      - sieve_proxy
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+    volumes:
+      - /srv/data/authelia/data:/config
+      - ./config/configuration.yml:/config/configuration.yml:ro
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=sieve_proxy"
+      - "traefik.http.routers.authelia.rule=Host(`authelia.${DOMAIN}`)"
+      - "traefik.http.routers.authelia.entrypoints=websecure"
+      - "traefik.http.services.authelia.loadbalancer.server.port=9091"
+      # Forward-auth middleware other sieve/percolator/mochaPot routers
+      # reference as authelia@docker once they're ready to sit behind SSO.
+      - "traefik.http.middlewares.authelia.forwardauth.address=http://authelia:9091/api/authz/forward-auth"
+      - "traefik.http.middlewares.authelia.forwardauth.trustForwardHeader=true"
+      - "traefik.http.middlewares.authelia.forwardauth.authResponseHeaders=Remote-User,Remote-Groups,Remote-Name,Remote-Email"
+
+networks:
+  sieve_proxy:
+    external: true

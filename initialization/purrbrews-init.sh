@@ -132,6 +132,15 @@ AGE_KEY_FILE="${AGE_KEY_DIR}/keys.txt"
 # Set to "false" to skip the baseline UFW firewall step entirely.
 ENABLE_UFW="true"
 
+# Morning `git pull --ff-only` cron (step_cron_pull, scripts/purrbrews-pull.sh)
+# — pull-only, never pushes. Time is NODE-LOCAL per cron/systemd's clock;
+# confirm each node's timezone (`timedatectl`) matches what you expect
+# before trusting "morning" to mean what you think it means. Set
+# ENABLE_CRON_PULL="false" to skip installing this entirely.
+ENABLE_CRON_PULL="true"
+CRON_PULL_HOUR="6"
+CRON_PULL_MINUTE="15"
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -275,7 +284,7 @@ step_apt_base() {
     ca-certificates curl gnupg lsb-release \
     git age sudo vim htop tmux net-tools \
     unattended-upgrades apt-listchanges \
-    ufw
+    ufw cron gettext-base
 
   # Unattended security updates — covers the "updates" half of base hardening.
   if [[ ! -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
@@ -531,6 +540,43 @@ EOF
   chmod 644 "$envfile"
 }
 
+step_cron_pull() {
+  [[ "$ENABLE_CRON_PULL" == "true" ]] || { log "Morning git pull cron disabled (ENABLE_CRON_PULL=false) — skipping."; return; }
+
+  log "Morning git pull cron (pull-only, never pushes)"
+
+  local pull_script="${PROJECT_DIR}/scripts/purrbrews-pull.sh"
+  if [[ ! -f "$pull_script" ]]; then
+    warn "scripts/purrbrews-pull.sh not found at $pull_script — repo not cloned yet, or an older"
+    warn "checkout that predates it. Skipping cron install; re-run this script once it's present."
+    return
+  fi
+
+  install -d -m 755 -o "$OPS_USER" -g "$OPS_USER" /var/log/purrbrews
+
+  # Invoke via `bash <path>` rather than executing the file directly, so this
+  # doesn't depend on the script's executable bit surviving the clone/pull.
+  local cron_marker="# purrbrews-pull (managed by purrbrews-init.sh — safe to re-run)"
+  local cron_line
+  cron_line="$(printf '%d %d * * * PURRBREWS_PROJECT_DIR=%s bash %s %s' \
+    "$CRON_PULL_MINUTE" "$CRON_PULL_HOUR" "$PROJECT_DIR" "$pull_script" "$cron_marker")"
+
+  local current stripped
+  current="$(crontab -u "$OPS_USER" -l 2>/dev/null || true)"
+  # Drop any previous purrbrews-pull line(s) first, so re-running this script
+  # (e.g. after changing CRON_PULL_HOUR/MINUTE) updates the schedule in place
+  # instead of stacking duplicate cron entries.
+  stripped="$(printf '%s\n' "$current" | grep -vF "$cron_marker" || true)"
+  { printf '%s\n' "$stripped"; printf '%s\n' "$cron_line"; } \
+    | sed '/^\s*$/d' \
+    | crontab -u "$OPS_USER" -
+
+  log "Cron installed for $OPS_USER: pulls $PROJECT_DIR daily at $(printf '%02d:%02d' "$CRON_PULL_HOUR" "$CRON_PULL_MINUTE") (node-local time)."
+  log "Logs: /var/log/purrbrews/pull.log. NOTE: this only works once \$OPS_USER has non-interactive"
+  log "git credentials for the remote (see the KNOWN GAP comment in purrbrews-pull.sh) — an HTTPS"
+  log "clone of a private repo will fail every run until that's set up."
+}
+
 step_age_key() {
   log "age keypair (SOPS secrets encryption)"
 
@@ -604,6 +650,10 @@ step_summary() {
       Pi-hole → lldap → Redis → Authelia → Traefik → Headscale → cloudflared).
     - If \$PROJECT_DIR isn't a git repo yet (no remote was configured when
       this ran), set PURRBREWS_REMOTE_URL and re-run to clone it.
+    - If this node has no non-interactive git credentials for the remote yet
+      (HTTPS + private repo needs one), the morning pull cron will fail every
+      run until that's set up — see the KNOWN GAP note in
+      scripts/purrbrews-pull.sh.
 
 EOF
 }
@@ -618,7 +668,7 @@ for arg in "$@"; do
   [[ "$arg" == "--yes" ]] && AUTO_YES="true"
 done
 
-[[ -n "$NODE" ]] || { echo "Usage: sudo $SCRIPT_NAME <sieve|silo|cellar> [--yes]"; exit 1; }
+[[ -n "$NODE" ]] || { echo "Usage: sudo $SCRIPT_NAME <sieve|silo|cellar|percolator|mochaPot> [--yes]"; exit 1; }
 
 step_preflight
 step_hostname_hosts
@@ -630,6 +680,7 @@ step_lid_switch
 step_docker
 step_git_repo
 step_directories
+step_cron_pull
 step_age_key
 step_firewall
 step_summary
