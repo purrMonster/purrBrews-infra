@@ -24,6 +24,14 @@ services:
       # the config once) — see backlog: check whether Pi-hole itself (or a
       # fork) supports real reverse-proxy auth-trust instead of this.
       FTLCONF_webserver_api_password: ""
+      # Upstream resolver Pi-hole forwards non-blocked queries to — chosen
+      # 2026-08-29 (Cloudflare), set here so it survives a container
+      # recreate instead of only living in whatever was clicked in
+      # Settings -> DNS. FTLCONF_ vars are semicolon-separated for list
+      # values; confirm after recreating that Settings -> DNS still shows
+      # Cloudflare selected and the dashboard's "DNS server failure"
+      # warning is gone.
+      FTLCONF_dns_upstreams: "1.1.1.1;1.0.0.1"
     volumes:
       - /srv/data/pihole/etc-pihole:/etc/pihole
       - /srv/data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
