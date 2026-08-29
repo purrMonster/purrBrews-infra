@@ -4,7 +4,10 @@ Six apps, one docker-compose.yml each, brought up in this order (each one
 depends on the one before it being healthy — see the "why" in the runbook's
 2026-08-28 entries):
 
-1. **pihole** — DNS/DHCP, everything else depends on local name resolution
+1. **pihole** — DNS/DHCP, everything else depends on local name resolution.
+   Its admin UI is reverse-proxied through Traefik (see below) rather than
+   published directly, so it isn't really usable over HTTP until Traefik is
+   also up — DNS itself works from the moment this container is healthy.
 2. **lldap** — identity backend
 3. **authelia** — bundles its own Redis; needs lldap up first
 4. **traefik** — forward-auth middleware points at the now-verified authelia
@@ -78,6 +81,44 @@ this at all). Traefik's own Host-rule routing (see each app's
 
 `./compose.sh <app> logs -f` / `down` / etc. all work the same way — it's a
 thin wrapper that just supplies the right `--env-file` flags.
+
+## Pi-hole's admin UI, and why it needs a firewall rule (decided 2026-08-29)
+
+Pi-hole uses `network_mode: host` (it needs to see real LAN traffic for
+DNS), and Traefik separately publishes host ports 80/443 for LAN-facing
+routing — those collide if Pi-hole's own webserver also tries to bind
+80/443 on the same host. Fix: Pi-hole's webserver moved to port 8080
+(`FTLCONF_webserver_port` in `pihole/docker-compose.yml`), and
+`pihole.${DOMAIN}` is now a Traefik route (`traefik/config/dynamic.yml.template`)
+that reaches it via `http://host.docker.internal:8080` — `extra_hosts:
+host.docker.internal:host-gateway` in `traefik/docker-compose.yml` is what
+makes that resolvable from inside Traefik's container, since a host-network
+container isn't reachable by container name the way the rest of the stack
+is.
+
+**Pi-hole's own password is also disabled** (`FTLCONF_webserver_api_password: ""`)
+— Authelia's forward-auth middleware on the `pihole` router is the *only*
+gate now, not an additional one in front of Pi-hole's own login. This means
+**port 8080 must never be reachable from anywhere except Traefik itself.**
+Concretely, on sieve:
+
+```sh
+# Find sieve_proxy's actual subnet (Docker assigns it automatically):
+docker network inspect sieve_proxy --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+
+# Allow only that subnet to reach 8080 — nothing else, not even the rest of the LAN:
+sudo ufw allow from <subnet from above> to any port 8080 proto tcp comment 'traefik -> pihole webui'
+```
+
+If that rule is ever missing or too broad, the result is a fully
+unauthenticated Pi-hole admin panel reachable to whoever can reach it — this
+firewall rule *is* the security boundary here, not a hardening extra.
+Backlog: check Pi-hole's own docs (and whether a community fork exists) for
+a real reverse-proxy auth-trust mechanism (header-based or OIDC) instead of
+disabling the password outright — see the runbook backlog.
+
+DNS itself (port 53, TCP+UDP) is unrelated to any of this and still needs
+its own `ufw` rule scoped to your LAN subnet, same as always.
 
 ## Split-horizon DNS
 

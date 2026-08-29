@@ -8,8 +8,22 @@ services:
     network_mode: host
     environment:
       TZ: ${TZ:-Asia/Kolkata}
-      WEBPASSWORD: ${PIHOLE_WEBPASSWORD}
       DNSMASQ_LISTENING: all
+      # Web UI moved off 80/443 (2026-08-29) — those ports are Traefik's
+      # alone now. Traefik reverse-proxies pihole.${DOMAIN} to this port
+      # instead (see traefik/config/dynamic.yml.template). DNS (port 53)
+      # never went through Traefik and still doesn't — unaffected.
+      FTLCONF_webserver_port: "8080o,[::]:8080o"
+      # Password disabled deliberately: Authelia's forward-auth in front of
+      # this route (via Traefik) is now the ONLY gate — decision 2026-08-29.
+      # This is safe ONLY as long as port 8080 is unreachable except from
+      # Traefik (see the ufw rule scoped to sieve_proxy's subnet in the
+      # README) — that firewall rule is now the entire security boundary
+      # for this admin panel, not a nice-to-have. FTLCONF_ vars force this
+      # every startup (unlike the old WEBPASSWORD var, which only seeded
+      # the config once) — see backlog: check whether Pi-hole itself (or a
+      # fork) supports real reverse-proxy auth-trust instead of this.
+      FTLCONF_webserver_api_password: ""
     volumes:
       - /srv/data/pihole/etc-pihole:/etc/pihole
       - /srv/data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d

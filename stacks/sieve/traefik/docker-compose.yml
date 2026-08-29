@@ -9,6 +9,14 @@ services:
       - "443:443"
     environment:
       CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
+    extra_hosts:
+      # Lets Traefik reach services running directly on sieve's host
+      # network rather than on sieve_proxy — right now just Pi-hole's admin
+      # UI (see traefik/config/dynamic.yml.template), since Pi-hole needs
+      # network_mode: host for real DNS traffic and so isn't reachable by
+      # container name the way authelia/lldap/redis are. host-gateway is
+      # Docker's built-in resolution for "the host itself", added 2026-08-29.
+      - "host.docker.internal:host-gateway"
     volumes:
       # Docker socket access is how Traefik discovers labeled containers —
       # standard for this pattern, but worth knowing it's there.

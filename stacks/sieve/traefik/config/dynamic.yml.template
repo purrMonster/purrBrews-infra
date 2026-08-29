@@ -3,8 +3,11 @@
 ##
 ## File-provider routes live here; most app routes instead use Docker
 ## labels (see e.g. authelia/docker-compose.yml) so they travel with their
-## own compose file. This is for Traefik's own dashboard, which has no
-## container of its own to hang labels off of.
+## own compose file. This is for routes with no container of their own to
+## hang labels off of: Traefik's own dashboard, and (added 2026-08-29)
+## Pi-hole's admin UI — Pi-hole needs network_mode: host for real DNS
+## traffic, which means it isn't on sieve_proxy and Traefik's docker-label
+## discovery can't see it, same reasoning as the dashboard.
 
 http:
   routers:
@@ -17,3 +20,20 @@ http:
       # labels on the authelia service, hence the @docker suffix.
       middlewares:
         - authelia@docker
+    pihole:
+      rule: "Host(`pihole.${DOMAIN}`)"
+      entrypoints:
+        - websecure
+      service: pihole
+      # Pi-hole's own password is disabled (see pihole/docker-compose.yml)
+      # — this middleware is the ONLY thing standing between the LAN and an
+      # unauthenticated Pi-hole admin panel. Not optional here.
+      middlewares:
+        - authelia@docker
+  services:
+    pihole:
+      loadBalancer:
+        servers:
+          # host.docker.internal resolves via the extra_hosts entry in
+          # traefik/docker-compose.yml — see that file's comment.
+          - url: "http://host.docker.internal:8080"
