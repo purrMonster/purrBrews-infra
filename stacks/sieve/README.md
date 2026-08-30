@@ -78,11 +78,37 @@ this at all). Traefik's own Host-rule routing (see each app's
 ./compose.sh authelia  up -d   # verify login against lldap before continuing
 ./compose.sh traefik   up -d   # confirm internal routing before continuing
 ./compose.sh headscale up -d
+./headscale-bootstrap.sh --dry-run # preview, then run for real (see below) — creates the barista/penguin/bubbles headscale users
 ./compose.sh cloudflared up -d # last — only after everything above is confirmed working over LAN
 ```
 
 `./compose.sh <app> logs -f` / `down` / etc. all work the same way — it's a
 thin wrapper that just supplies the right `--env-file` flags.
+
+### `headscale-bootstrap.sh` — user provisioning via headscale's CLI (added 2026-08-30)
+
+headscale "users" aren't login accounts — they're a grouping label every
+device on the tailnet belongs to, mainly so ACL policy can later say things
+like "only barista's nodes can reach the DB ports" (no ACL policy is
+configured yet — `config/config.yaml.template` has no `acl_policy_path` —
+so today this is purely organizational, but the grouping is far easier to
+get right up front than to re-home devices into different users later).
+This household's split (decided 2026-08-30): `barista` owns the fleet's own
+server nodes (sieve, silo, cellar, percolator, mochaPot), `penguin` and
+`bubbles` own their respective personal devices. The script creates
+whichever of those three don't already exist, via `headscale users create`
+inside the container — idempotent, safe to re-run.
+
+```sh
+./headscale-bootstrap.sh --dry-run   # see what it would do
+./headscale-bootstrap.sh             # actually do it
+```
+
+Run it any time after `./compose.sh headscale up -d`. It doesn't generate
+pre-auth keys or add any devices — that's a deliberate one-at-a-time manual
+step (`headscale preauthkeys create --user <name> --expiration 1h`, then
+`tailscale up --login-server=https://headscale.${DOMAIN} --authkey=<key>`
+on the device itself), not something to automate away.
 
 ### `pihole-dns-bootstrap.sh` — split-horizon DNS via Pi-hole's own config API (added 2026-08-30)
 
