@@ -72,6 +72,7 @@ this at all). Traefik's own Host-rule routing (see each app's
 
 ```sh
 ./compose.sh pihole    up -d
+./pihole-dns-bootstrap.sh --dry-run # preview, then run for real (see below) — sets pihole/authelia/traefik/headscale split-horizon entries via pihole-FTL's own config API
 ./compose.sh lldap     up -d
 ./lldap-bootstrap.sh --dry-run # preview, then run for real (see below) — creates LLDAP_INFRA_ADMIN_GROUP + adds barista, via lldap's API
 ./compose.sh authelia  up -d   # verify login against lldap before continuing
@@ -82,6 +83,33 @@ this at all). Traefik's own Host-rule routing (see each app's
 
 `./compose.sh <app> logs -f` / `down` / etc. all work the same way — it's a
 thin wrapper that just supplies the right `--env-file` flags.
+
+### `pihole-dns-bootstrap.sh` — split-horizon DNS via Pi-hole's own config API (added 2026-08-30)
+
+The original plan was a rendered `custom-dns/*.conf` file bind-mounted into
+`/etc/dnsmasq.d/` — a v5-era Pi-hole pattern. This stack runs Pi-hole v6
+(FTL v6.7), which generates dnsmasq's actual config entirely from
+`/etc/pihole/pihole.toml` at every startup and never scans `/etc/dnsmasq.d`
+at all — that file sat there completely inert, no error or warning, just
+silently never read. First real login test failed with NXDOMAIN on
+`pihole.${DOMAIN}` despite the file being correctly rendered and mounted,
+which is how this got caught (see the 2026-08-30 runbook entry for the full
+diagnosis). The real v6 mechanism is `pihole.toml`'s `misc.dnsmasq_lines`
+array — a raw dnsmasq-config-line passthrough (same `address=/domain/ip`
+syntax as before, just relocated), set via `pihole-FTL --config
+misc.dnsmasq_lines '[...]'` instead of a file. This script sets it
+idempotently: reads the current value, adds only whatever's missing
+(pihole/authelia/traefik/headscale `.${DOMAIN}` -> `SIEVE_LAN_IP`), and
+restarts the container only if something actually changed.
+
+```sh
+./pihole-dns-bootstrap.sh --dry-run   # see what it would do
+./pihole-dns-bootstrap.sh             # actually do it
+```
+
+Run it any time after `./compose.sh pihole up -d` — nothing else needs to
+be up first, and it's safe to re-run (e.g. after adding a new subdomain to
+the `SUBDOMAINS` array at the top of the script).
 
 ### `lldap-bootstrap.sh` — group provisioning via lldap's API (added 2026-08-30)
 
@@ -157,13 +185,14 @@ its own `ufw` rule scoped to your LAN subnet, same as always.
 
 ## Split-horizon DNS
 
-`pihole/custom-dns/05-purrbrews-split-horizon.conf.template` lists the
-sieve-hosted subdomains (pihole, authelia, traefik, headscale) resolving to
-`SIEVE_LAN_IP` on the LAN. `render-configs.sh` bakes in the real values.
-Services that end up on percolator/mochaPot later get their **own** entries
-pointing at *that* node's LAN IP — sieve's Traefik only fronts the external
-tunnel, per the hybrid split-horizon architecture (see the initiation doc,
-Section 0.3 / WBS 18.2).
+`pihole-dns-bootstrap.sh` sets the sieve-hosted subdomains (pihole,
+authelia, traefik, headscale) resolving to `SIEVE_LAN_IP` on the LAN,
+directly in Pi-hole's own live config (see that script's section above —
+this used to be a rendered `custom-dns/*.conf` file, which turned out to be
+inert under Pi-hole v6). Services that end up on percolator/mochaPot later
+get their **own** entries pointing at *that* node's LAN IP — sieve's
+Traefik only fronts the external tunnel, per the hybrid split-horizon
+architecture (see the initiation doc, Section 0.3 / WBS 18.2).
 
 ## Known gaps / things to double-check before relying on this
 

@@ -45,8 +45,23 @@ services:
       FTLCONF_dns_upstreams: "1.1.1.1;1.0.0.1"
     volumes:
       - /srv/data/pihole/etc-pihole:/etc/pihole
-      - /srv/data/pihole/etc-dnsmasq.d:/etc/dnsmasq.d
-      - ./custom-dns/05-purrbrews-split-horizon.conf:/etc/dnsmasq.d/05-purrbrews-split-horizon.conf:ro
+    # No /etc/dnsmasq.d bind mount here (removed 2026-08-30) — this image is
+    # Pi-hole v6 (FTL v6.7), which generates dnsmasq's actual config
+    # entirely from /etc/pihole/pihole.toml at every startup and never
+    # scans /etc/dnsmasq.d for *.conf files at all. A dropped-in
+    # custom-dns/*.conf file (the v5-era pattern this originally used) sits
+    # there completely inert — no error, no warning, just silently never
+    # read, which is why pihole.whiskertreat.fyi returned NXDOMAIN on first
+    # real test despite the file being correctly rendered and mounted. The
+    # real v6 mechanism is the `misc.dnsmasq_lines` array inside
+    # pihole.toml (a raw dnsmasq-config-line passthrough — same
+    # `address=/domain/ip` syntax we were already using, just relocated),
+    # set via `pihole-FTL --config misc.dnsmasq_lines '[...]'` rather than a
+    # file. See ../pihole-dns-bootstrap.sh, which sets it idempotently, and
+    # the 2026-08-30 runbook entry for the full story. pihole.toml itself
+    # lives in /etc/pihole (still bind-mounted above), so it persists
+    # across container recreates the same way the rest of Pi-hole's state
+    # does.
     restart: unless-stopped
     # DHCP is off by default here. Turn it on later via the admin UI
     # (Settings -> DHCP) only after confirming the router's own DHCP
