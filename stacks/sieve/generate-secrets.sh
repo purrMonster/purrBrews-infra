@@ -111,6 +111,7 @@ LLDAP_ADMIN_PW="$(get_value "${DIR}/lldap/secrets.env.local" "LLDAP_ADMIN_PASSWO
 set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_LDAP_PASSWORD" "$LLDAP_ADMIN_PW"
 set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_SESSION_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_STORAGE_ENCRYPTION_KEY" "$(rand 32)"
+set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_RESET_PASSWORD_JWT_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/authelia/secrets.env.local" "REDIS_PASSWORD" "$(rand 24)"
 
 log "traefik/secrets.env.local"
