@@ -55,11 +55,14 @@ log "Reading current headscale users"
 LIST_JSON="$(${DOCKER_CMD} exec headscale headscale users list --output json)" \
   || fail "Couldn't list users from the headscale container — is it running? (./compose.sh headscale up -d)"
 
-echo "$LIST_JSON" | jq -e 'type == "array"' >/dev/null 2>&1 \
-  || fail "Expected a JSON array from 'headscale users list --output json' but got something else — real output was:
+echo "$LIST_JSON" | jq -e '(. == null) or (type == "array")' >/dev/null 2>&1 \
+  || fail "Expected a JSON array (or null for zero users) from 'headscale users list --output json' but got something else — real output was:
 $LIST_JSON"
 
-EXISTING_NAMES="$(echo "$LIST_JSON" | jq -r '.[].name')"
+# headscale prints the literal `null`, not `[]`, when there are zero users
+# (a Go nil-slice-marshals-to-null quirk) — confirmed 2026-08-30 on a genuinely
+# fresh instance. `// []` treats null the same as an empty array.
+EXISTING_NAMES="$(echo "$LIST_JSON" | jq -r '(. // [])[].name')"
 echo "  Currently exist: $(echo "$EXISTING_NAMES" | grep -c . || true) user(s)"
 
 declare -a MISSING=()
