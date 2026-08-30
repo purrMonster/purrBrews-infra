@@ -25,8 +25,18 @@ services:
       - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
       - /srv/data/traefik/letsencrypt:/letsencrypt
     restart: unless-stopped
-    labels:
-      - "traefik.enable=true"
+    # No `traefik.enable=true` label here, deliberately (removed 2026-08-30
+    # after first bring-up) — Traefik's own dashboard route already exists
+    # via the file provider (dynamic.yml's `traefik-dashboard` router,
+    # `service: api@internal`), same reasoning as Pi-hole not needing
+    # docker-label discovery. Enabling it on this container with no
+    # accompanying router rule made Traefik's docker provider auto-generate
+    # a garbage self-referential router (domain "traefik-traefik", no dot)
+    # and fail an ACME cert request for it on every single reload — noisy,
+    # not fatal, but pointless. If this container ever needs a real
+    # docker-label route of its own, add `traefik.enable=true` back
+    # together with an explicit `traefik.http.routers.<name>.rule` label
+    # in the same edit — never one without the other.
 
 networks:
   sieve_proxy:
