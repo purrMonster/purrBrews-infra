@@ -92,6 +92,11 @@ prompt_if_placeholder() {
 log ".env.local (shared)"
 set_if_absent "${DIR}/.env.local" "SIEVE_LAN_IP" "192.168.0.10"
 set_if_absent "${DIR}/.env.local" "TZ" "Asia/Kolkata"
+# Not a secret — just kept out of the .template files so the lldap group
+# name Authelia checks isn't hardcoded. Rename here (and in lldap's admin
+# UI, to match) if you ever want a different group name; nothing else needs
+# to change.
+set_if_absent "${DIR}/.env.local" "LLDAP_INFRA_ADMIN_GROUP" "purrbrews_infra_admins"
 prompt_if_placeholder "${DIR}/.env.local" "DOMAIN" \
   "Domain (e.g. yourdomain.com)" "REPLACE_ME.example.com"
 

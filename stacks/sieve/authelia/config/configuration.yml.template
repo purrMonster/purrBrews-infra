@@ -46,19 +46,20 @@ identity_validation:
 access_control:
   default_policy: deny
   rules:
-    # Infra-admin surfaces — restricted to the purrbrews_infra_admins lldap
+    # Infra-admin surfaces — restricted to the LLDAP_INFRA_ADMIN_GROUP lldap
     # group (currently just barista), not merely "any logged-in user".
     # Decided 2026-08-30 alongside the barista/penguin/bubbles identity
     # model — see stacks/sieve/README.md and runbook.md. Rules are matched
     # top-to-bottom, first match wins, so these two must stay above the
-    # catch-all below.
+    # catch-all below. Group name comes from .env.local, not hardcoded here
+    # — must match the group you create in lldap's admin UI exactly.
     - domain: 'pihole.${DOMAIN}'
       subject:
-        - 'group:purrbrews_infra_admins'
+        - 'group:${LLDAP_INFRA_ADMIN_GROUP}'
       policy: one_factor
     - domain: 'traefik.${DOMAIN}'
       subject:
-        - 'group:purrbrews_infra_admins'
+        - 'group:${LLDAP_INFRA_ADMIN_GROUP}'
       policy: one_factor
     # Catch-all for everything else: any authenticated lldap user, no group
     # restriction. Nothing lives here yet (penguin/bubbles don't exist as
