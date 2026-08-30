@@ -13,6 +13,21 @@ private_key_path: /var/lib/headscale/private.key
 noise:
   private_key_path: /var/lib/headscale/noise_private.key
 
+# The IP ranges headscale hands out to devices as they join the tailnet —
+# NOT optional despite being absent from the first version of this file
+# (added 2026-08-30 after headscale refused to start at all: "no IPv4 or
+# IPv6 prefix configured, minimum one prefix is required"). These are
+# headscale's own documented defaults, same ranges Tailscale's own hosted
+# control plane uses: 100.64.0.0/10 is a CGNAT range reserved for exactly
+# this (carrier-grade NAT / shared address space, RFC 6598) so it won't
+# collide with your real LAN's 192.168.0.0/24, and fd7a:115c:a1e0::/48 is
+# headscale's fixed ULA (unique local address) v6 prefix. No reason to
+# change either unless you already have another Tailscale/headscale
+# network on the same devices that also uses these ranges.
+prefixes:
+  v4: 100.64.0.0/10
+  v6: fd7a:115c:a1e0::/48
+
 database:
   type: sqlite
   sqlite:
