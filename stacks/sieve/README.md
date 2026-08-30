@@ -78,7 +78,7 @@ this at all). Traefik's own Host-rule routing (see each app's
 ./compose.sh authelia  up -d   # verify login against lldap before continuing
 ./compose.sh traefik   up -d   # confirm internal routing before continuing
 ./compose.sh headscale up -d
-./headscale-bootstrap.sh --dry-run # preview, then run for real (see below) — creates the barista/penguin/bubbles headscale users
+./headscale-bootstrap.sh --dry-run barista # preview, then run for real (see below) — creates the headscale user(s) you name
 ./compose.sh cloudflared up -d # last — only after everything above is confirmed working over LAN
 ```
 
@@ -93,22 +93,35 @@ like "only barista's nodes can reach the DB ports" (no ACL policy is
 configured yet — `config/config.yaml.template` has no `acl_policy_path` —
 so today this is purely organizational, but the grouping is far easier to
 get right up front than to re-home devices into different users later).
-This household's split (decided 2026-08-30): `barista` owns the fleet's own
-server nodes (sieve, silo, cellar, percolator, mochaPot), `penguin` and
-`bubbles` own their respective personal devices. The script creates
-whichever of those three don't already exist, via `headscale users create`
-inside the container — idempotent, safe to re-run.
+This household's model (decided 2026-08-30): `barista` owns the fleet's own
+server nodes (sieve, silo, cellar, percolator, mochaPot); `penguin` and
+`bubbles` will own their respective personal devices, whenever those two
+are actually being onboarded.
+
+Takes the user(s) to create as arguments — deliberately not a hardcoded
+list, since creating a headscale user is a provisioning action (same
+category as an lldap account), not a fixed fact about the stack. Concretely:
+run it for `barista` now, since the fleet's own nodes are about to join the
+tailnet; hold off running it for `penguin`/`bubbles` until you're actually
+ready to add their devices, same standing call as those two's lldap
+accounts ("once everything's up and we're ready to use the system like
+production").
 
 ```sh
-./headscale-bootstrap.sh --dry-run   # see what it would do
-./headscale-bootstrap.sh             # actually do it
+./headscale-bootstrap.sh --dry-run barista   # see what it would do
+./headscale-bootstrap.sh barista             # actually do it
+
+# later, whenever penguin/bubbles are actually being onboarded:
+./headscale-bootstrap.sh penguin bubbles
 ```
 
-Run it any time after `./compose.sh headscale up -d`. It doesn't generate
-pre-auth keys or add any devices — that's a deliberate one-at-a-time manual
-step (`headscale preauthkeys create --user <name> --expiration 1h`, then
-`tailscale up --login-server=https://headscale.${DOMAIN} --authkey=<key>`
-on the device itself), not something to automate away.
+Idempotent either way — safe to re-run, only creates whichever named
+user(s) don't already exist. Run it any time after `./compose.sh headscale
+up -d`. It doesn't generate pre-auth keys or add any devices — that's a
+deliberate one-at-a-time manual step (`headscale preauthkeys create --user
+<name> --expiration 1h`, then `tailscale up
+--login-server=https://headscale.${DOMAIN} --authkey=<key>` on the device
+itself), not something to automate away.
 
 ### `pihole-dns-bootstrap.sh` — split-horizon DNS via Pi-hole's own config API (added 2026-08-30)
 

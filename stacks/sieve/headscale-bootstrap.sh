@@ -1,28 +1,41 @@
 #!/usr/bin/env bash
 #
-# headscale-bootstrap.sh — idempotently ensures the three headscale users
-# (namespaces, not login accounts) this tailnet is organized around exist:
-# `barista` (the fleet's own server nodes — sieve, silo, cellar,
-# percolator, mochaPot) and `penguin` / `bubbles` (personal devices) —
-# decided 2026-08-30, see runbook.md. Splitting server nodes from personal
-# devices into different headscale users now is what makes it possible to
-# write ACL policy later like "only barista's nodes can reach the DB
-# ports" — headscale has no ACL policy configured yet
-# (headscale/config/config.yaml.template has no acl_policy_path), so today
-# this is purely organizational, but it's much easier to get the grouping
-# right from the start than to re-home devices into different users later.
+# headscale-bootstrap.sh — idempotently ensures the given headscale users
+# (namespaces, not login accounts — a grouping label devices belong to,
+# mainly relevant once ACL policy gets written; headscale has none
+# configured yet, no acl_policy_path in config.yaml.template) exist,
+# creating whichever of them don't.
+#
+# Takes usernames as arguments deliberately, not a hardcoded list (fixed
+# 2026-08-30 — see runbook.md) — a headscale user is a provisioning
+# action, same category of thing as an lldap account, not a fixed
+# structural fact about this stack the way the DNS subdomain list in
+# pihole-dns-bootstrap.sh is. In particular: `barista` (the fleet's own
+# server nodes — sieve, silo, cellar, percolator, mochaPot) is needed soon
+# since those nodes are about to join the tailnet, but `penguin`/`bubbles`
+# (personal devices) should only get created when those two are actually
+# being onboarded — same standing call as their lldap accounts ("once
+# everything's up and we're ready to use the system like production"),
+# not just because this script happened to run.
+#
+# Usage:
+#   ./headscale-bootstrap.sh [--dry-run] <user> [<user> ...]
+#
+# Examples:
+#   ./headscale-bootstrap.sh --dry-run barista
+#   ./headscale-bootstrap.sh barista
+#   ./headscale-bootstrap.sh penguin bubbles   # whenever they're ready
 #
 # NOTE: unlike lldap-bootstrap.sh (GraphQL, reconstructed from memory) this
 # talks to headscale's own `headscale` CLI inside the container, which is
 # a much smaller surface — but the exact `users list --output json` shape
-# below is still reconstructed from what's documented for headscale
-# 0.27.x, not exercised against this real instance yet. If a command below
-# errors, read headscale's own error message first (it's usually direct —
-# "command not found", wrong flag name, etc.) rather than assuming
-# something structural is broken.
+# is still partly reconstructed from headscale 0.27.x's documented
+# behavior. Confirmed 2026-08-30 against a real instance: zero users
+# prints the literal `null`, not `[]` (a Go nil-slice quirk) — handled
+# below. If another command errors, read headscale's own error message
+# first rather than assuming something structural is broken.
 #
-# Run this any time after `./compose.sh headscale up -d`. Idempotent —
-# safe to re-run; only creates users that don't already exist.
+# Idempotent — safe to re-run; only creates users that don't already exist.
 #
 # --dry-run: lists current users for real (harmless) but doesn't create
 # anything. Use this first, same as every other bootstrap script here.
@@ -30,7 +43,19 @@
 set -euo pipefail
 
 DRY_RUN=0
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+if [[ "${1:-}" == "--dry-run" ]]; then
+  DRY_RUN=1
+  shift
+fi
+
+if [[ $# -eq 0 ]]; then
+  echo "Usage: $0 [--dry-run] <user> [<user> ...]" >&2
+  echo "Example: $0 barista" >&2
+  echo "Example: $0 --dry-run penguin bubbles" >&2
+  exit 1
+fi
+
+USERS=("$@")
 
 command -v jq >/dev/null 2>&1 || {
   echo "jq not found — install it (apt-get install jq) and re-run." >&2
@@ -42,10 +67,6 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 DOCKER_CMD="docker"
 docker info >/dev/null 2>&1 || DOCKER_CMD="sudo docker"
-
-# Edit this list if the household's user model changes — see the note at
-# the top of this file for the reasoning behind the current split.
-USERS=(barista penguin bubbles)
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   log "DRY RUN — reading current users for real, nothing will actually be created"
@@ -73,7 +94,7 @@ for u in "${USERS[@]}"; do
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
-  log "All ${#USERS[@]} users (${USERS[*]}) already exist — nothing to do."
+  log "All requested user(s) (${USERS[*]}) already exist — nothing to do."
   exit 0
 fi
 
