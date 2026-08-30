@@ -6,6 +6,17 @@ services:
     # for DNS (port 53) and, if you enable it later, DHCP broadcasts —
     # neither works reliably from behind the docker bridge.
     network_mode: host
+    # dnsmasq needs this to fully configure itself — without it, FTL still
+    # reports "listening on port 53" (binding the socket only needs
+    # NET_BIND_SERVICE, which Docker grants by default) but every query
+    # times out, because dnsmasq itself never finished initializing. Added
+    # 2026-08-29 after `dig @127.0.0.1` timed out and the logs showed:
+    # "CRIT: Error in dnsmasq configuration: process is missing required
+    # capability NET_ADMIN". Standard requirement for this image, present
+    # since first bring-up — just never surfaced until DNS was tested
+    # directly rather than only checked via the web UI/port reachability.
+    cap_add:
+      - NET_ADMIN
     environment:
       TZ: ${TZ:-Asia/Kolkata}
       DNSMASQ_LISTENING: all
