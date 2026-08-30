@@ -73,6 +73,7 @@ this at all). Traefik's own Host-rule routing (see each app's
 ```sh
 ./compose.sh pihole    up -d
 ./compose.sh lldap     up -d
+./lldap-bootstrap.sh --dry-run # preview, then run for real (see below) — creates LLDAP_INFRA_ADMIN_GROUP + adds barista, via lldap's API
 ./compose.sh authelia  up -d   # verify login against lldap before continuing
 ./compose.sh traefik   up -d   # confirm internal routing before continuing
 ./compose.sh headscale up -d
@@ -81,6 +82,40 @@ this at all). Traefik's own Host-rule routing (see each app's
 
 `./compose.sh <app> logs -f` / `down` / etc. all work the same way — it's a
 thin wrapper that just supplies the right `--env-file` flags.
+
+### `lldap-bootstrap.sh` — group provisioning via lldap's API (added 2026-08-30)
+
+Authelia's `access_control` (see `authelia/config/configuration.yml.template`)
+gates `pihole.${DOMAIN}` and `traefik.${DOMAIN}` on membership in the
+`LLDAP_INFRA_ADMIN_GROUP` group (`.env.local`, default
+`purrbrews_infra_admins`) — but that variable only feeds Authelia's own
+rendered config; nothing pushes it into lldap itself, since lldap's groups
+are directory data (created via its UI/API), not something templated into
+`lldap/docker-compose.yml` the way `LLDAP_ADMIN_PASSWORD` is. This script
+closes that gap: it logs into lldap's REST auth endpoint as `admin`, then
+uses lldap's GraphQL API (the same one its own admin UI calls) to create
+the group if it's missing and add `barista` to it if not already a member.
+Idempotent — safe to re-run.
+
+Run it with `--dry-run` first, at least the first time: reads (auth,
+listing groups, looking up barista) happen for real, but it prints what it
+*would* create/change instead of actually calling `createGroup` /
+`addUserToGroup`. Worth it here specifically because this is the first
+script in the stack that calls lldap's live API rather than just
+generating a config file — see the note at the top of the script and the
+2026-08-30 runbook entry.
+
+```sh
+./lldap-bootstrap.sh --dry-run   # see what it would do
+./lldap-bootstrap.sh             # actually do it
+```
+
+**It does not create the `barista` account itself** — that's still a
+manual step in the admin UI (barista's SSO password is meant to be typed
+in and known by you, not auto-generated into a secrets file the way
+service-to-service credentials are). If `barista` doesn't exist yet when
+you run this, the script says so and does nothing destructive; create the
+account, then re-run it.
 
 ## Pi-hole's admin UI, and why it needs a firewall rule (decided 2026-08-29)
 
