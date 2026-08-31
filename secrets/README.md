@@ -6,6 +6,16 @@ This directory holds SOPS-encrypted files only — ciphertext, safe to commit. N
 - Offline backup of the private key (printed or on a USB kept safely) is the disaster-recovery copy; a convenience copy in Vaultwarden (once cellar is live) is secondary to that.
 - To encrypt a new secret file: `sops -e -i secrets/<name>.sops.yaml`. To edit: `sops secrets/<name>.sops.yaml` (decrypts in your editor, re-encrypts on save — needs the private key present locally).
 
+## Installing `sops`
+
+- **roastery (Windows):** `winget install SecretsOPerationS.SOPS` — note the package ID, not the old `mozilla-sops` name.
+- **Any fleet node (Debian):** no apt package exists — checked against sops' own GitHub issue tracker as of **2026-08-31**, where this exact question was raised for Debian Trixie with no Debian package identified. Install the `.deb` from GitHub releases instead:
+  ```sh
+  curl -LO https://github.com/getsops/sops/releases/download/v3.13.3/sops_3.13.3_amd64.deb
+  sudo apt install ./sops_3.13.3_amd64.deb
+  ```
+  `v3.13.3` was current as of 2026-08-31 — check https://github.com/getsops/sops/releases for a newer one before running this for real, same caveat as every other pinned version in this project. `apt install ./file.deb` registers it as a real tracked package (`apt list --installed` sees it), not a loose binary dropped on `PATH`.
+
 ## Layout (2026-08-31)
 
 One subdirectory per node: `secrets/<node>/<app>.sops.yaml`, one file per app — e.g. `secrets/silo/komodo.sops.yaml`. Each file is a flat YAML mapping (`KEY: value`, no nesting) so it round-trips cleanly through `sops -d --output-type dotenv` into the same `<app>/secrets.env.local` format every stack's `compose.sh`/`render-configs.sh` already consumes.

@@ -1,0 +1,18 @@
+# Restricts this resolver to exactly one client: sieve's Pi-hole. Unbound
+# matches access-control rules by longest-prefix-match, not first- or
+# last-line-wins — a /32 here is maximally specific and always takes
+# precedence for this one address over whatever broader access-control
+# rules klutchell/unbound's own default config ships with, regardless of
+# load order. That property is why a single additive line here is enough,
+# without needing to know or override the base image's full default
+# config — confirmed via Unbound's own documented matching behavior before
+# relying on it, not guessed.
+#
+# An open recursive resolver is a real, well-known abuse vector (DNS
+# amplification attacks) — this line is the only thing standing between
+# "internal resolver for sieve" and "open resolver reachable by anyone who
+# can route to silo." Backlog: verify for real after bring-up —
+# `dig @${SILO_LAN_IP} example.com` from any LAN device that ISN'T sieve
+# should come back REFUSED or time out, not answer.
+server:
+  access-control: ${SIEVE_LAN_IP}/32 allow

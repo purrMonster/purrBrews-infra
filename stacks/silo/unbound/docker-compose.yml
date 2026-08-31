@@ -1,0 +1,42 @@
+services:
+  unbound:
+    # klutchell/unbound — chosen over the more commonly-referenced
+    # mvance/unbound after checking both on Docker Hub (2026-08-31):
+    # mvance/unbound's newest tag (1.22.0) hadn't been pushed in ~2 years;
+    # klutchell/unbound's `main` tag was pushed less than a day before this
+    # was written. For a DNS resolver — exploitable software if left
+    # unpatched, and the one thing standing between sieve and the open
+    # internet's root servers — freshness mattered more here than a
+    # conventional semver tag.
+    #
+    # No semver releases exist for this image (CI-built, tagged by branch,
+    # not version) — `main` is the documented, intended tag per the
+    # project's own README, not a cop-out substitute for a real pin.
+    # Digest as of 2026-08-31, recorded for audit purposes (not pinned to,
+    # since this was read off a summarized fetch rather than confirmed
+    # byte-for-byte — a wrong `image:` digest fails loudly at pull time
+    # either way, so `main` stays the safer functional pin here):
+    #   sha256:ef24d26eaa095aee2253dca7d7039e2443ca3c05214ecfda73acece6763254a8
+    # Revisit once Diun exists (later in this same silo build order) — it's
+    # built specifically to flag exactly this kind of image drift.
+    image: klutchell/unbound:main
+    container_name: unbound
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+    volumes:
+      # Additive — merges with the image's own default config rather than
+      # replacing it. Recursive resolution via root hints, DNSSEC
+      # validation, and root-hints/trust-anchor upkeep all come from that
+      # default, untouched here (confirmed via the image's own docs: a
+      # plain `docker run` with no mounted config already gives a working
+      # recursive resolver — that default is exactly what we want to keep).
+      # This file only narrows who's allowed to query it at all.
+      - ./config/access-control.conf:/etc/unbound/custom.conf.d/access-control.conf:ro
+    restart: unless-stopped
+    # No cap_add here, unlike sieve's pihole (which needed NET_ADMIN for
+    # dnsmasq's low-level socket setup under host networking). Unbound runs
+    # in bridge mode with a plain published port — no host networking, no
+    # raw sockets — so it hasn't needed one in testing so far. If it turns
+    # out to, that'll show up as a clear startup error, not a silent
+    # failure — see the DNS-facing apps' track record so far in this repo.
