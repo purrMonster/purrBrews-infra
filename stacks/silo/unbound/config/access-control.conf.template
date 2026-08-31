@@ -1,34 +1,53 @@
 # Restricts this resolver to exactly one client: sieve's Pi-hole.
 #
-# CORRECTED 2026-08-31, on first real bring-up: the original version of
-# this file shipped only the specific `allow` line below, reasoning that
-# Unbound's longest-prefix-match would make a /32 win over whatever
-# broader rule the base image's default config already had. That
-# reasoning was incomplete — longest-prefix-match only decides what
-# happens for traffic that actually MATCHES the more specific rule
-# (sieve's own traffic); it does nothing to restrict every OTHER source
-# IP, which stayed governed entirely by the base default's own rules.
-# First real test caught this: querying from an unrelated LAN device (not
-# sieve) got a normal NOERROR answer instead of REFUSED — an open
-# resolver reachable by anyone on the LAN, exactly the abuse vector this
-# file was supposed to prevent.
+# The base image's own default config (klutchell/unbound-docker,
+# rootfs_overlay/etc/unbound/unbound.conf — read directly from source
+# 2026-08-31, after the first fix attempt below still failed) ships:
+#   access-control: 127.0.0.0/8    allow   (localhost)
+#   access-control: 192.168.0.0/16 allow   (our whole LAN, and then some)
+#   access-control: 172.16.0.0/12  allow   (includes Docker's own default
+#                                           bridge-network ranges)
+#   access-control: 10.0.0.0/8     allow
 #
-# Fixed by adding an explicit deny-everyone-by-default rule alongside the
-# specific allow. For two access-control entries at the same specificity
-# (both 0.0.0.0/0 here), Unbound resolves by load order — last one wins —
-# and custom.conf.d files load after the base config, so this `refuse`
-# line overrides whatever the base default's own 0.0.0.0/0 rule was,
-# regardless of what it actually was. The more-specific /32 `allow` for
-# sieve still wins over both via longest-prefix-match — that part of the
-# original reasoning held up fine, it just wasn't sufficient on its own.
+# SECOND correction, 2026-08-31: the first fix here (`0.0.0.0/0 refuse`
+# plus sieve's `/32 allow`) still failed the real test — an unrelated LAN
+# device still got a normal answer. Root cause: the base's broad allow is
+# at /16, not /0 — a /0 refuse is LESS specific than a /16 allow, so per
+# Unbound's own documented matching rule ("the most specific netblock
+# match is used ... the order of the access-control statements therefore
+# does not matter" — confirmed against Unbound's own manpage this time,
+# not assumed a second time), the base's /16 allow always won regardless
+# of what a /0 rule said. A same-prefix override (/16 refuse fighting the
+# base's /16 allow) was considered instead, but Unbound's docs explicitly
+# don't define a tie-break for two EQUALLY specific entries — not
+# something to build a security boundary on.
 #
-# access-control only governs who's allowed to QUERY this resolver — it
-# has no effect on Unbound's own outbound recursive lookups to root
-# servers, so this can't break resolution itself, only who's allowed to
-# ask.
+# This version refuses at 192.168.0.0/24 instead — our actual LAN, more
+# specific than the base's /16 allow, so "most specific always wins,
+# order doesn't matter" applies with no ambiguity. Sieve's own /32 allow
+# is more specific still, so it wins over this refuse the same
+# unambiguous way.
 server:
-  # Deny everyone by default...
-  access-control: 0.0.0.0/0 refuse
-  access-control: ::0/0 refuse
-  # ...except sieve, Unbound's only intended client.
+  access-control: 192.168.0.0/24 refuse
   access-control: ${SIEVE_LAN_IP}/32 allow
+
+  # Best-effort only, for the two other ranges the base allows —
+  # 172.16.0.0/12 (includes Docker's own default bridge-network ranges)
+  # and 10.0.0.0/8. Refused at the SAME prefix length the base grants
+  # them, which per the tie-break ambiguity above isn't guaranteed to
+  # win. No device on this network actually lives in either range, so
+  # the realistic exposure is narrow — would need code execution inside
+  # a container on silo itself to matter, not "any device on the LAN"
+  # like the /24 case above. Tracked in the runbook backlog to verify
+  # for real rather than left assumed a third time.
+  access-control: 172.16.0.0/12 refuse
+  access-control: 10.0.0.0/8 refuse
+
+  # 127.0.0.0/8 (localhost) deliberately left as the base allows it —
+  # that's silo itself, not the open-LAN exposure this file exists to
+  # close.
+  #
+  # No IPv6 access-control needed: the base config's only `interface:`
+  # line is `0.0.0.0` (IPv4), no `::0` — Unbound isn't listening on any
+  # IPv6 address at all here, so there's nothing for an IPv6 client to
+  # reach regardless of access-control.
