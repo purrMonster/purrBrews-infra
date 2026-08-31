@@ -1,0 +1,20 @@
+# Links shown on the dashboard, grouped under a heading. Pre-seeded with
+# sieve's existing apps only, since those are the only things actually up
+# as of 2026-08-31 — add silo's own apps here as they get built (Unbound
+# has no web UI worth linking; Komodo/NetAlertX/Speedtest Tracker/Scrutiny
+# will). Format reference: https://gethomepage.dev/configs/services/
+#
+# Example, once e.g. Komodo exists:
+#   - Komodo:
+#       href: http://${SILO_LAN_IP}:9120
+#       description: Fleet container manager
+- PurrBrews:
+    - Traefik:
+        href: https://traefik.${DOMAIN}
+        description: sieve — reverse proxy dashboard
+    - Pi-hole:
+        href: https://pihole.${DOMAIN}
+        description: sieve — DNS / ad-block
+    - Headscale:
+        href: https://headscale.${DOMAIN}
+        description: sieve — tailnet control plane (no web UI, health check only)

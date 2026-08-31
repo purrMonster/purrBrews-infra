@@ -1,0 +1,10 @@
+# Top-level look/behavior settings. Deliberately minimal — this is a
+# stopgap dashboard (decided 2026-08-31), not a tuned one. Full option list:
+# https://gethomepage.dev/configs/settings/
+title: PurrBrews
+theme: dark
+color: slate
+layout:
+  PurrBrews:
+    style: row
+    columns: 3

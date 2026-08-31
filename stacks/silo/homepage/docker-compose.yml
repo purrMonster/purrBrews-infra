@@ -1,0 +1,26 @@
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v1.13.2
+    container_name: homepage
+    # Host-published directly for now, no Traefik/Authelia in front of it —
+    # same interim pattern as lldap's admin UI on sieve (see
+    # ../../sieve/lldap/docker-compose.yml's comment and the matching
+    # backlog item to route it through Traefik/Authelia properly later).
+    # This is a stopgap dashboard — decided 2026-08-31 ("include one for
+    # now, simplest option, until we build our own") — not something to
+    # build on top of. Swap it out for the real one later, don't extend it.
+    ports:
+      - "3000:3000"
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+      # Homepage 1.0+ rejects any request whose Host header isn't in this
+      # list — a security guard added in the 1.0 release (confirmed via
+      # Homepage's own docs before adding this, not guessed). localhost:3000
+      # and 127.0.0.1:3000 are allowed by default, but browsing to it by LAN
+      # IP needs its own entry here or every request gets a host-validation
+      # error. Comma-separated, no spaces — add a real hostname too if this
+      # ever gets routed through Traefik.
+      HOMEPAGE_ALLOWED_HOSTS: ${SILO_LAN_IP}:3000
+    volumes:
+      - ./config:/app/config
+    restart: unless-stopped
