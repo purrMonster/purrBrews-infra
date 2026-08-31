@@ -19,6 +19,21 @@
 # '[...]'`. See pihole/docker-compose.yml's comment and the 2026-08-30
 # runbook entry for the full story.
 #
+# Each subdomain gets an AAAA override too (added 2026-08-30, cloudflared
+# bring-up), not just A — `address=/domain/ip` only intercepts A queries;
+# an IPv6 (AAAA) query for the same name still gets forwarded upstream and
+# answered for real if that name has actual public DNS (which
+# headscale.${DOMAIN} now does, once routed through cloudflared). A LAN
+# client then sees a mix of our local A answer and Cloudflare's real AAAA
+# answer, and most OSes/browsers prefer IPv6 when offered — so it was
+# connecting straight to Cloudflare's public edge instead of sieve, causing
+# ERR_QUIC_PROTOCOL_ERROR and then ERR_ECH_FALLBACK_CERTIFICATE_INVALID
+# once QUIC was disabled. Fixed by also setting `address=/domain/::` for
+# every subdomain (not just headscale) — `::` is unroutable, so any client
+# preferring it fails fast and falls back to the real IPv4 address. Applied
+# to all subdomains defensively, not just the one that's public today, so
+# this doesn't need rediscovering the next time another one goes public.
+#
 # Idempotent — safe to re-run. Only appends entries that are actually
 # missing; never removes or reorders anything already in dnsmasq_lines (so
 # it won't clobber an entry you added by hand for something outside this
@@ -91,19 +106,20 @@ echo "  Currently set: ${#CURRENT_LINES[@]} line(s)"
 declare -a MERGED=("${CURRENT_LINES[@]}")
 declare -a MISSING=()
 for sub in "${SUBDOMAINS[@]}"; do
-  desired="address=/${sub}.${DOMAIN}/${SIEVE_LAN_IP}"
-  found=0
-  for existing in "${CURRENT_LINES[@]}"; do
-    [[ "$existing" == "$desired" ]] && { found=1; break; }
+  for desired in "address=/${sub}.${DOMAIN}/${SIEVE_LAN_IP}" "address=/${sub}.${DOMAIN}/::"; do
+    found=0
+    for existing in "${CURRENT_LINES[@]}"; do
+      [[ "$existing" == "$desired" ]] && { found=1; break; }
+    done
+    if [[ "$found" -eq 0 ]]; then
+      MISSING+=("$desired")
+      MERGED+=("$desired")
+    fi
   done
-  if [[ "$found" -eq 0 ]]; then
-    MISSING+=("$desired")
-    MERGED+=("$desired")
-  fi
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
-  log "All ${#SUBDOMAINS[@]} split-horizon entries already present — nothing to do."
+  log "All $((${#SUBDOMAINS[@]} * 2)) split-horizon entries (A + AAAA-block per subdomain) already present — nothing to do."
   exit 0
 fi
 

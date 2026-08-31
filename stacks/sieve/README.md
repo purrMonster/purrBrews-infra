@@ -141,6 +141,21 @@ idempotently: reads the current value, adds only whatever's missing
 (pihole/authelia/traefik/headscale `.${DOMAIN}` -> `SIEVE_LAN_IP`), and
 restarts the container only if something actually changed.
 
+Each subdomain also gets an `address=/domain/::` line (added 2026-08-30,
+during `cloudflared` bring-up) — `address=/domain/ip` only intercepts A
+(IPv4) queries; an AAAA (IPv6) query for the same name still gets
+forwarded upstream and answered for real once that name has actual public
+DNS, which `headscale.${DOMAIN}` now does via `cloudflared`. A LAN client
+then saw a mix of our local A answer and Cloudflare's real AAAA answer,
+and most OSes/browsers prefer IPv6 when it's offered — so it was
+connecting straight to Cloudflare's public edge instead of sieve, not the
+LAN routing you'd expect (surfaced as `ERR_QUIC_PROTOCOL_ERROR`, then
+`ERR_ECH_FALLBACK_CERTIFICATE_INVALID` once QUIC was disabled). The `::`
+line is unroutable, so a client that prefers it fails fast and falls back
+to the real IPv4 address. Applied to every subdomain, not just the one
+that's public today, so this doesn't need rediscovering the next time
+another one gets exposed through `cloudflared`.
+
 ```sh
 ./pihole-dns-bootstrap.sh --dry-run   # see what it would do
 ./pihole-dns-bootstrap.sh             # actually do it
