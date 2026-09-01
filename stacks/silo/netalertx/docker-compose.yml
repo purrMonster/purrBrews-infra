@@ -1,0 +1,45 @@
+services:
+  netalertx:
+    image: ghcr.io/netalertx/netalertx:26.8.5
+    container_name: netalertx
+    # host networking, not bridge — deliberately, and NOT the same reasoning
+    # as unbound's bridge choice on this same node. NetAlertX does passive
+    # discovery (ARP/NBNS/mDNS) and active LAN scanning, both of which
+    # bridge networking blocks outright — confirmed via NetAlertX's own
+    # troubleshooting docs before choosing this, not guessed. Same category
+    # of requirement as sieve's Pi-hole (network_mode: host for real DNS
+    # traffic), different underlying reason.
+    network_mode: host
+    cap_add:
+      - NET_ADMIN     # ARP scanning, nmap, traceroute
+      - NET_RAW       # raw socket operations
+      - NET_BIND_SERVICE
+    environment:
+      PORT: "20211"
+      GRAPHQL_PORT: "20212"
+      # SCAN_SUBNETS isn't a plain top-level env var — NetAlertX's own docs
+      # (DOCKER_INSTALLATION, SUBNETS) require it via this APP_CONF_OVERRIDE
+      # JSON blob, whose value is itself a string that LOOKS like a Python
+      # list literal (single-quoted inside double-quoted JSON) — reproduced
+      # exactly per the docs' own example, not simplified, since this is
+      # exactly the kind of nested-quoting detail that's easy to get subtly
+      # wrong. ${SILO_LAN_SUBNET}/${SILO_LAN_INTERFACE} come from
+      # .env.local (see local.env.example) — deliberately NOT hardcoded to
+      # a guess like eth0: this is the exact failure mode a real GitHub
+      # discussion (jokob-sk/NetAlertX#770) hit — host networking alone
+      # isn't enough, a wrong or missing interface/subnet here means
+      # NetAlertX runs, looks healthy, and silently scans nothing. Find the
+      # real interface name with (run this ON silo, not in the container):
+      #   ip -o link show | awk -F': ' '!/lo|vir|docker/ {print $2}'
+      APP_CONF_OVERRIDE: '{"SCAN_SUBNETS":"[''${SILO_LAN_SUBNET} --interface=${SILO_LAN_INTERFACE}'']"}'
+    volumes:
+      - /srv/data/netalertx:/data
+      # NetAlertX's docs use a host-localtime bind mount for timezone,
+      # not a TZ env var like every other app in this repo — kept as
+      # documented rather than forced into the repo's usual ${TZ} pattern,
+      # since this is the pattern NetAlertX's own maintainers verified
+      # works for their scheduler/logging.
+      - /etc/localtime:/etc/localtime:ro
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

@@ -286,11 +286,36 @@ docker exec crowdsec cscli metrics         # traffic through each collection's s
 **Before relying on this to protect anything: test that a ban actually
 gets enforced**, the same "don't assume, verify" discipline unbound's
 access-control needed twice before it was right. A safe way to test
-without banning yourself: `docker exec crowdsec cscli decisions add --ip
-198.51.100.1 --duration 1m --reason test` (a TEST-NET address, not a real
-one — see RFC 5737), then confirm sieve actually drops traffic that would
-claim to be from it, and that the decision clears itself after the minute
-is up (`docker exec crowdsec cscli decisions list`).
+without banning yourself: `sudo docker exec crowdsec cscli decisions add
+--ip 198.51.100.1 --duration 1m --reason test` (a TEST-NET address, not a
+real one — see RFC 5737).
+
+You can't actually verify this by trying to send traffic *from*
+198.51.100.1 — that would need IP-spoofing tools, not something to reach
+for just to test a firewall rule. What you can check directly is whether
+the bouncer actually pulled the decision and applied it to sieve's real
+firewall state, which is the part that matters (LAPI having a decision
+and the bouncer enforcing it are two different things — this is the check
+that the second one is actually happening):
+
+```sh
+sudo ipset list -n | grep -i crowdsec   # find crowdsec's ipset name(s)
+sudo ipset list <name-from-above> | grep 198.51.100.1   # should be present
+sudo iptables -L -n -v | grep -i crowdsec   # confirm a rule references that set
+```
+
+Then confirm it clears itself, both in crowdsec's own view and in the
+actual firewall state, once the minute is up:
+
+```sh
+sudo docker exec crowdsec cscli decisions list   # should no longer list it
+sudo ipset list <name-from-above> | grep 198.51.100.1   # should be gone here too
+```
+
+If the entry shows up in `cscli decisions list` but never actually lands
+in the ipset, that's a real gap between "crowdsec decided to ban" and
+"sieve's firewall enforces it" — worth chasing down before trusting this
+with anything, not something to wave off.
 
 If you ever do lock yourself out from outside (see the runbook's
 CrowdSec-self-lockout discussion), fix it from LAN/tailnet access — SSH

@@ -10,7 +10,9 @@ Apps come up in this order:
 
 1. **unbound** — recursive resolver feeding sieve's Pi-hole; no dependencies
 2. **homepage** — stopgap dashboard; not part of Section 18.3's own sequence, brought up early since it doesn't depend on or block anything
-3. netalertx, speedtest tracker, komodo, scrutiny, diun — not built yet
+3. **netalertx** — LAN device discovery/presence alerting; no dependencies
+4. speedtest tracker, komodo, scrutiny, diun — not built yet (no
+   interdependencies between these four, any order is fine)
 
 **crowdsec lives on `stacks/sieve/`, not here** (decided 2026-09-01,
 despite Section 18.3 naming silo as its home) — see
@@ -37,8 +39,8 @@ here shares a port space with sieve's table in `stacks/sieve/README.md`.
 |------|-------|-------|-------|
 | 53 | tcp+udp | unbound | Recursive resolver — access-control restricted to sieve only, see below. |
 | 3000 | tcp | homepage | Stopgap dashboard, LAN-reachable directly — not yet routed through Traefik. |
-
-## Secrets: SOPS+age
+| 20211 | tcp | netalertx | Web UI. `network_mode: host`, same category as sieve's Pi-hole — no `ports:` list of its own, binds directly on the host. |
+| 20212 | tcp | netalertx | GraphQL API — opened to the LAN alongside 20211 on the assumption the browser UI calls it directly, not verified as server-side-only. See Known gaps. |
 
 ## Secrets: SOPS+age
 
@@ -69,8 +71,10 @@ command -v sops || echo "sops not installed — see secrets/README.md"
 else in this section: creates `.env.local` from `local.env.example` if it
 doesn't exist, prompts for any `REPLACE_ME` value still in it (`SILO_LAN_IP`,
 `DOMAIN`, `SIEVE_LAN_IP` — confirm that last one matches
-`stacks/sieve/.env.local`'s own value exactly; only `TZ` has a real default
-it won't ask about), runs `./decrypt-secrets.sh`,
+`stacks/sieve/.env.local`'s own value exactly; `SILO_LAN_INTERFACE`/
+`SILO_LAN_SUBNET` as of 2026-09-01, for netalertx — see that app's own
+section below for how to find the real interface name; only `TZ` has a real
+default it won't ask about), runs `./decrypt-secrets.sh`,
 warns (without trying to fix) if a decrypted secret still has a `REPLACE_ME`
 in it, then runs `./render-configs.sh`. Safe to re-run any time — a value
 that's already set is never touched. See its own header comment for why
@@ -127,6 +131,41 @@ silo app is up): edit `homepage/config/services.yaml.template`, then
 2026-08-31 "Stopgap Homepage dashboard" entry for why this app, why
 `HOMEPAGE_ALLOWED_HOSTS` is required, and the image pin.
 
+### netalertx
+
+Before bringing it up, find silo's actual LAN interface name and fill in
+`SILO_LAN_INTERFACE`/`SILO_LAN_SUBNET` in `.env.local` (`./setup-secrets.sh`
+prompts for these if still `REPLACE_ME` — see above):
+
+```sh
+ip -o link show | awk -F': ' '!/lo|vir|docker/ {print $2}'   # run on silo itself
+```
+
+Then:
+
+```sh
+sudo mkdir -p /srv/data/netalertx
+sudo ufw allow from 192.168.0.0/24 to any port 20211 proto tcp
+sudo ufw allow from 192.168.0.0/24 to any port 20212 proto tcp
+./compose.sh netalertx up -d
+```
+
+**Verify it's actually scanning something before trusting the device
+list** — this is the exact "runs clean, does nothing" failure mode a real
+NetAlertX user hit (a wrong/missing interface, no error, no crash, just
+zero devices found):
+
+```sh
+docker logs netalertx --tail 50   # look for scan activity, not just a clean startup
+```
+
+Then open `http://<SILO_LAN_IP>:20211` and confirm it actually lists
+real devices on your LAN — not just silo and the gateway, which is what
+a wrong `SILO_LAN_INTERFACE` looks like (see the runbook's 2026-09-01
+entry for the real GitHub discussion this pattern is based on). If the
+device count looks obviously short, double check `SILO_LAN_INTERFACE`
+against the command above before assuming it's a scan-timing issue.
+
 ## Known gaps / things to double-check before relying on this
 
 - `unbound`'s `klutchell/unbound:main` tag is a rolling tag, not a version
@@ -136,3 +175,15 @@ silo app is up): edit `homepage/config/services.yaml.template`, then
   standing gap as lldap's admin UI on sieve.
 - `homepage` is a stopgap dashboard, not the real one — see the runbook
   backlog for the DIY replacement, still undesigned.
+- `netalertx`'s GraphQL port (20212) is opened to the whole LAN subnet
+  alongside the web UI (20211), on the assumption the browser calls it
+  directly — not confirmed against the actual app's network traffic. If
+  it turns out to be server-side-only, narrow that ufw rule to
+  loopback/localhost only.
+- `netalertx`'s image tag (`26.8.5`) is pinned to what was current as of
+  2026-09-01 — same "check before first real deploy, or wait for Diun"
+  caveat as `unbound`'s tag above.
+- `netalertx` runs with default `PUID`/`PGID` (20211:20211) — not
+  reconciled against silo's actual host user, so files under
+  `/srv/data/netalertx` may not be owned by `barista`. Only matters if
+  you need to touch that directory directly from the host shell.
