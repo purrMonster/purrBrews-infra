@@ -1,0 +1,23 @@
+## Rendered by ../../render-configs.sh from this .template — edit the
+## .template, never the rendered acquis.yaml (it gets overwritten). No
+## ${VAR} substitution actually happens in this particular file (nothing
+## here is node-specific) — still a .template because every file under a
+## config/ dir in this repo is, so the "never hand-edit the rendered
+## output" rule stays uniform across the whole stack rather than being an
+## exception for this one file.
+##
+## Tells crowdsec's agent half what to read and how to label it for the
+## parser chain — see docker-compose.yml's COLLECTIONS for which
+## collections actually consume each label. Two sources, `---`-separated
+## (crowdsec's acquis.yaml is a multi-document YAML stream, one acquisition
+## config per source):
+
+filenames:
+  - /var/log/traefik/access.log
+labels:
+  type: traefik
+---
+filenames:
+  - /var/log/auth.log
+labels:
+  type: syslog

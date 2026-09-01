@@ -10,7 +10,15 @@ Apps come up in this order:
 
 1. **unbound** — recursive resolver feeding sieve's Pi-hole; no dependencies
 2. **homepage** — stopgap dashboard; not part of Section 18.3's own sequence, brought up early since it doesn't depend on or block anything
-3. crowdsec, netalertx, speedtest tracker, komodo, scrutiny, diun — not built yet
+3. netalertx, speedtest tracker, komodo, scrutiny, diun — not built yet
+
+**crowdsec lives on `stacks/sieve/`, not here** (decided 2026-09-01,
+despite Section 18.3 naming silo as its home) — see
+`stacks/sieve/README.md`'s crowdsec section and the runbook's 2026-09-01
+entry for why: sieve turned out to be the only node with anything worth
+watching (silo has no public exposure at all), and running everything on
+one node avoided a genuinely unconfirmed cross-node registration/bouncer
+deployment problem for no real benefit at this fleet's size.
 
 For the "why" behind any choice below (image picks, networking mode,
 config approach, secrets model) see the dated runbook entries linked
@@ -25,10 +33,10 @@ run:
 
 1. **On roastery**: add a `Set-SopsSecretIfAbsent` call to
    `generate-secrets.ps1` for any new secret, run it, `git add`/commit/push.
-2. **On silo**, after `git pull`: `./decrypt-secrets.sh` before
-   `./render-configs.sh` — needs the age private key at
-   `/etc/purrbrews/age/keys.txt` (copied from sieve once, per
-   `secrets/README.md`).
+2. **On silo**, after `git pull`: `./setup-secrets.sh` (runs
+   `./decrypt-secrets.sh` as one of its steps — see below) — needs the age
+   private key at `/etc/purrbrews/age/keys.txt` (copied from sieve once,
+   per `secrets/README.md`).
 
 ## First-time setup on silo
 
@@ -38,15 +46,22 @@ chmod +x *.sh   # harmless if already set — see stacks/sieve/README.md's note 
 
 command -v sops || echo "sops not installed — see secrets/README.md"
 
-cp local.env.example .env.local
-# Fill in by hand:
-#   SILO_LAN_IP   this node's real LAN IP
-#   DOMAIN        same real domain as stacks/sieve/.env.local
-# SIEVE_LAN_IP is already defaulted (192.168.0.10) — only change it if that ever changes.
-
-./decrypt-secrets.sh   # secrets/silo/*.sops.yaml -> */secrets.env.local (no-op until an app has one)
-./render-configs.sh    # bakes SILO_LAN_IP/SIEVE_LAN_IP/DOMAIN into every config
+./setup-secrets.sh
 ```
+
+`setup-secrets.sh` (added 2026-08-31) is the one command that does everything
+else in this section: creates `.env.local` from `local.env.example` if it
+doesn't exist, prompts for any `REPLACE_ME` value still in it (`SILO_LAN_IP`,
+`DOMAIN`, `SIEVE_LAN_IP` — confirm that last one matches
+`stacks/sieve/.env.local`'s own value exactly; only `TZ` has a real default
+it won't ask about), runs `./decrypt-secrets.sh`,
+warns (without trying to fix) if a decrypted secret still has a `REPLACE_ME`
+in it, then runs `./render-configs.sh`. Safe to re-run any time — a value
+that's already set is never touched. See its own header comment for why
+this exists: Homepage's first real bring-up (2026-08-31) failed its host
+check because `.env.local` had no automated fill-in the way sieve's
+`generate-secrets.sh` handles its own, and "fill in by hand" turned out to
+be an easy step to skip past without noticing.
 
 ## Bringing each app up
 

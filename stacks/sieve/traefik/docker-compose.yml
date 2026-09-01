@@ -24,6 +24,11 @@ services:
       - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
       - /srv/data/traefik/letsencrypt:/letsencrypt
+      # JSON access log, added 2026-09-01 — crowdsec reads this (mounted
+      # read-only into the crowdsec container, see
+      # ../crowdsec/docker-compose.yml) to feed the crowdsecurity/traefik
+      # collection. See traefik.yml's accessLog block for the format.
+      - /srv/data/traefik/logs:/var/log/traefik
     restart: unless-stopped
     # No `traefik.enable=true` label here, deliberately (removed 2026-08-30
     # after first bring-up) — Traefik's own dashboard route already exists

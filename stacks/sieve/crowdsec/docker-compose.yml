@@ -1,0 +1,42 @@
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.7.8
+    container_name: crowdsec
+    environment:
+      TZ: ${TZ}
+      # All-in-one mode (default): neither DISABLE_LOCAL_API nor
+      # DISABLE_AGENT is set, so this one container is both the LAPI
+      # (decision engine) and the agent (log parsing) — see the 2026-09-01
+      # runbook entry for why this replaced the original silo/sieve split.
+      COLLECTIONS: "crowdsecurity/traefik crowdsecurity/sshd crowdsecurity/linux"
+    volumes:
+      # Mandatory since crowdsec v1.7.0 — decision/alert state, parser
+      # cache, hub index. Without this the container still runs but loses
+      # everything on recreate.
+      - /srv/data/crowdsec/data:/var/lib/crowdsec/data
+      - ./config/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      # Traefik's JSON access log — read-only, written by the traefik
+      # container (see ../traefik/docker-compose.yml). Same host path,
+      # different container, so both sides agree on content without either
+      # needing to reach the other over the network.
+      - /srv/data/traefik/logs:/var/log/traefik:ro
+      # sieve's own SSH auth log, straight from the host. Verify this path
+      # is actually where sshd logs land before trusting the sshd
+      # collection (rsyslog-based Debian: yes; a stripped-down
+      # journald-only install: no — see README).
+      - /var/log/auth.log:/var/log/auth.log:ro
+    ports:
+      # LAPI, host-loopback only. The firewall bouncer (installed directly
+      # on sieve, NOT in Docker — see ../crowdsec-bouncer-bootstrap.sh and
+      # its runbook entry for why native-host is the only sane deployment
+      # for something that has to rewrite the host's own iptables/nftables
+      # rules) reaches it at http://127.0.0.1:8080. Nothing outside sieve
+      # itself needs this port, hence loopback-only rather than a LAN-wide
+      # ufw rule the way unbound/homepage needed one.
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+    # Deliberately not on sieve_proxy and no traefik labels — crowdsec
+    # doesn't serve or proxy anything, it only reads log files (via the
+    # volumes above) and talks to its own LAPI over loopback. Uses the
+    # default bridge network for its own outbound calls (CAPI — the
+    # opt-in community blocklist signal exchange, and hub/index updates).

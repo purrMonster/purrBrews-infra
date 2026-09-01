@@ -14,6 +14,16 @@ depends on the one before it being healthy — see the "why" in the runbook's
 5. **headscale** — remote LAN mesh
 6. **cloudflared** — external exposure, deliberately last
 
+**Plus crowdsec** (Section 18.3, not one of the original six — added
+2026-09-01). Originally planned split across silo (LAPI/decision engine)
+and sieve (agent + firewall bouncer); moved here entirely once cross-node
+agent registration and the firewall bouncer's deployment mechanics turned
+out to be the only real source of complexity in that design, and sieve is
+also the only node CrowdSec actually has anything to watch on right now
+(silo has no public exposure). See the runbook's 2026-09-01 entry for the
+full reasoning. Bring it up after `cloudflared` — see its own section
+below.
+
 ## Secrets model (decided 2026-08-28)
 
 Not SOPS/age — plain, gitignored, generated locally on the node:
@@ -80,6 +90,8 @@ this at all). Traefik's own Host-rule routing (see each app's
 ./compose.sh headscale up -d
 ./headscale-bootstrap.sh --dry-run barista # preview, then run for real (see below) — creates the headscale user(s) you name
 ./compose.sh cloudflared up -d # last — only after everything above is confirmed working over LAN
+./compose.sh crowdsec up -d    # Section 18.3, not one of the six — see its own section below
+./crowdsec-bouncer-bootstrap.sh --dry-run # preview, then run for real (see below) — installs + registers the firewall bouncer
 ```
 
 `./compose.sh <app> logs -f` / `down` / etc. all work the same way — it's a
@@ -199,6 +211,63 @@ service-to-service credentials are). If `barista` doesn't exist yet when
 you run this, the script says so and does nothing destructive; create the
 account, then re-run it.
 
+### crowdsec — log-based intrusion detection + firewall enforcement (added 2026-09-01)
+
+Two pieces: the `crowdsec` container itself (reads logs, decides who to
+ban) and `crowdsec-bouncer-bootstrap.sh` (installs the thing that actually
+enforces those bans — see the script's own header for why that has to be a
+native host package, not a container).
+
+```sh
+sudo mkdir -p /srv/data/crowdsec/data /srv/data/traefik/logs
+./compose.sh crowdsec up -d
+```
+
+Before trusting the sshd collection, confirm sieve is actually writing to
+`/var/log/auth.log` (true on a standard rsyslog-based Debian install; not
+true on a stripped-down journald-only one):
+
+```sh
+ls -la /var/log/auth.log   # should exist and have a recent mtime
+```
+
+If it doesn't exist, the sshd collection has nothing to parse and silently
+does nothing — this needs a different acquisition method (journalctl
+source) rather than the file-based one in `config/acquis.yaml.template`;
+not yet built, see the runbook backlog.
+
+Then install and register the firewall bouncer:
+
+```sh
+./crowdsec-bouncer-bootstrap.sh --dry-run   # see what it would do
+./crowdsec-bouncer-bootstrap.sh             # actually do it
+```
+
+Verify it's actually connected (not just installed):
+
+```sh
+docker exec crowdsec cscli bouncers list   # should show sieve-firewall-bouncer with a recent last-seen time
+docker exec crowdsec cscli metrics         # traffic through each collection's scenarios, once there's been any
+```
+
+**Before relying on this to protect anything: test that a ban actually
+gets enforced**, the same "don't assume, verify" discipline unbound's
+access-control needed twice before it was right. A safe way to test
+without banning yourself: `docker exec crowdsec cscli decisions add --ip
+198.51.100.1 --duration 1m --reason test` (a TEST-NET address, not a real
+one — see RFC 5737), then confirm sieve actually drops traffic that would
+claim to be from it, and that the decision clears itself after the minute
+is up (`docker exec crowdsec cscli decisions list`).
+
+If you ever do lock yourself out from outside (see the runbook's
+CrowdSec-self-lockout discussion), fix it from LAN/tailnet access — SSH
+isn't publicly exposed, so a ban on your public IP doesn't touch it:
+
+```sh
+docker exec crowdsec cscli decisions list             # find the offending entry
+docker exec crowdsec cscli decisions delete --ip <ip>
+```
+
 ## Pi-hole's admin UI, and why it needs a firewall rule (decided 2026-08-29)
 
 Pi-hole uses `network_mode: host` (it needs to see real LAN traffic for
@@ -269,3 +338,23 @@ architecture (see the initiation doc, Section 0.3 / WBS 18.2).
 - **lldap's admin web UI (port 17170) is directly host-published**, not yet
   routed through Traefik/Authelia. Worth doing once the rest of this stack
   is confirmed working.
+- **crowdsec's firewall-bouncer package variant is hardcoded to
+  `-iptables`**, on the assumption that Debian's `iptables` command (even
+  when nft-backed, the modern default) is what the bouncer shells out to.
+  Not verified against a real nftables-only setup — if rules don't
+  actually apply, try `-nftables` instead (see
+  `crowdsec-bouncer-bootstrap.sh`'s header comment).
+- **No logrotate for `/srv/data/traefik/logs/access.log`** — it grows
+  unbounded until something rotates it. Fine at home-lab volume for now,
+  revisit if disk usage becomes a problem.
+- **crowdsec's sshd collection assumes rsyslog writes `/var/log/auth.log`**
+  — not verified against sieve's actual Debian install yet (see the
+  crowdsec section above for how to check, and what to do if it's
+  journald-only instead).
+- **No AppSec component (WAF-style request inspection) configured** —
+  scope was kept to log-based detection (traefik/sshd/linux collections)
+  plus firewall enforcement, matching what CrowdSec was actually brought
+  on to do. `crowdsecurity/appsec-*` collections are a possible later
+  addition, not needed for the current threat model.
+- **CrowdSec's own remote-unban-method backlog item is unrelated to any of
+  the above and still open** — see the runbook.

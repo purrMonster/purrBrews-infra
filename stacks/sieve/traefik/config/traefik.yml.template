@@ -40,3 +40,15 @@ api:
 
 log:
   level: INFO
+
+# JSON access log, added 2026-09-01 for crowdsec/crowdsecurity/traefik to
+# read (see ../../crowdsec/config/acquis.yaml.template) — Traefik's own
+# `log:` above is its internal process log, unrelated to this. No
+# `filters:` block, deliberately: logging every status code (not just
+# 4xx/5xx) so scenarios that key off request patterns rather than status
+# still have something to match against. Revisit if disk usage on
+# /srv/data/traefik/logs ever becomes a problem — no logrotate is set up
+# for this file yet (backlog).
+accessLog:
+  filePath: /var/log/traefik/access.log
+  format: json
