@@ -30,10 +30,22 @@ services:
       # on sieve, NOT in Docker — see ../crowdsec-bouncer-bootstrap.sh and
       # its runbook entry for why native-host is the only sane deployment
       # for something that has to rewrite the host's own iptables/nftables
-      # rules) reaches it at http://127.0.0.1:8080. Nothing outside sieve
+      # rules) reaches it at http://127.0.0.1:8090. Nothing outside sieve
       # itself needs this port, hence loopback-only rather than a LAN-wide
       # ufw rule the way unbound/homepage needed one.
-      - "127.0.0.1:8080:8080"
+      #
+      # Host port is 8090, NOT crowdsec's own default of 8080 (added
+      # 2026-09-01, first real bring-up) — Pi-hole already owns host 8080
+      # (pihole/docker-compose.yml, network_mode: host, moved there
+      # specifically to stay off Traefik's 80/443). Two different apps
+      # both trying to bind the host's own 8080 is exactly the kind of
+      # collision network_mode: host creates for every other container on
+      # the box, not just Traefik — confirmed the hard way (`docker compose
+      # up` failed outright: "address already in use") rather than checked
+      # up front. The container's own internal port is untouched (crowdsec
+      # itself still listens on 8080 inside its network namespace); only
+      # the host-side publish moved.
+      - "127.0.0.1:8090:8080"
     restart: unless-stopped
     # Deliberately not on sieve_proxy and no traefik labels — crowdsec
     # doesn't serve or proxy anything, it only reads log files (via the

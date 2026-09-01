@@ -24,6 +24,22 @@ For the "why" behind any choice below (image picks, networking mode,
 config approach, secrets model) see the dated runbook entries linked
 inline — this file is deliberately just the how.
 
+## Ports in use on this host (added 2026-09-01)
+
+**Check this table before publishing a new port in any app's
+`docker-compose.yml`.** Same reasoning as sieve's own version of this
+table — added after a real port collision on sieve (crowdsec vs. Pi-hole)
+made it obvious this should be checked up front, not discovered at
+`docker compose up` time. silo is a separate host from sieve — nothing
+here shares a port space with sieve's table in `stacks/sieve/README.md`.
+
+| Port | Proto | Owner | Notes |
+|------|-------|-------|-------|
+| 53 | tcp+udp | unbound | Recursive resolver — access-control restricted to sieve only, see below. |
+| 3000 | tcp | homepage | Stopgap dashboard, LAN-reachable directly — not yet routed through Traefik. |
+
+## Secrets: SOPS+age
+
 ## Secrets: SOPS+age
 
 Different from sieve's stack (plain gitignored local generation) — see

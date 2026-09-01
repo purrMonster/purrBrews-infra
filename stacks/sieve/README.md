@@ -24,6 +24,39 @@ also the only node CrowdSec actually has anything to watch on right now
 full reasoning. Bring it up after `cloudflared` — see its own section
 below.
 
+## Ports in use on this host (added 2026-09-01)
+
+**Check this table before publishing a new port in any app's
+`docker-compose.yml`.** Added after crowdsec's first bring-up failed
+outright (`address already in use`) from colliding with Pi-hole's
+already-published 8080 — a collision that would've been caught by
+scanning this table first, instead of discovered at `docker compose up`
+time. Two entries here need the whole table to make sense: Pi-hole uses
+`network_mode: host` (no `ports:` list of its own — whatever it binds
+lands directly on the host), and Traefik/lldap/crowdsec use normal
+Docker port-publishing (`ports:` in their compose files) — both end up
+occupying the same host port space, so they have to be checked against
+each other, not just against other entries of the same kind.
+
+| Port | Proto | Owner | Notes |
+|------|-------|-------|-------|
+| 53 | tcp+udp | pihole | DNS. `network_mode: host`. |
+| 67 | udp | pihole | DHCP — **currently off** (see pihole/docker-compose.yml's closing comment); reserved here so it isn't handed out elsewhere before it's turned on. |
+| 80 | tcp | traefik | HTTP, redirects to 443. |
+| 443 | tcp | traefik | HTTPS, all app routing. |
+| 8080 | tcp | pihole | Admin webserver, moved off 80/443 (2026-08-29) — see "Pi-hole's admin UI" below. Reachable only from Traefik's subnet via the ufw rule in that section, not the whole LAN. |
+| 8090 | tcp | crowdsec | LAPI, loopback-only (`127.0.0.1:8090:8080` — container's own internal port is still 8080, only the host-side publish moved off 8080 to dodge Pi-hole). Moved here 2026-09-01 after the collision above. |
+| 17170 | tcp | lldap | Admin web UI, LAN-reachable directly — not yet routed through Traefik/Authelia (see Known gaps). |
+
+Not host ports at all, for contrast — reachable only via Traefik's
+routing over the internal `sieve_proxy` Docker network, never published
+directly: authelia (9091), headscale (8080 *inside its own container* —
+unrelated to Pi-hole's host 8080 above, no collision since it's never
+published to the host).
+
+silo's ports are tracked separately in `stacks/silo/README.md` (different
+host, no shared port space with this table).
+
 ## Secrets model (decided 2026-08-28)
 
 Not SOPS/age — plain, gitignored, generated locally on the node:

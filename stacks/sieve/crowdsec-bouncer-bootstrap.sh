@@ -33,7 +33,7 @@
 #      crowdsec container's LAPI (docker exec crowdsec cscli bouncers
 #      add), capturing the API key it returns.
 #   3. Writes /etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml with
-#      that key, pointed at http://127.0.0.1:8080/ (crowdsec's LAPI port,
+#      that key, pointed at http://127.0.0.1:8090/ (crowdsec's LAPI port,
 #      published loopback-only — see crowdsec/docker-compose.yml).
 #   4. Enables + starts the crowdsec-firewall-bouncer systemd service.
 #
@@ -153,7 +153,7 @@ sudo tee "$BOUNCER_CONFIG" >/dev/null <<EOF
 # api_key (a hand-edit survives until the next re-run, which is exactly
 # when it'd get silently clobbered).
 mode: iptables
-api_url: http://127.0.0.1:8080/
+api_url: http://127.0.0.1:8090/
 api_key: ${API_KEY}
 disable_ipv6: false
 deny_action: DROP
