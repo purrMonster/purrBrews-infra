@@ -1,0 +1,10 @@
+# Rendered by render-configs.sh from *.template files, and filled by
+# decrypt-secrets.sh (secrets.env.local — decrypted at deploy time from
+# the committed ciphertext in secrets/silo/*.sops.yaml, never itself
+# committed) and by hand (.env.local — copy from local.env.example). The
+# *.template / *.example files are the tracked source of truth; these are
+# always regeneratable, never hand-edit them directly.
+.env.local
+*/secrets.env.local
+*/config/*
+!*/config/*.template

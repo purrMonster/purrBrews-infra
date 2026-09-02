@@ -1,0 +1,61 @@
+services:
+  scrutiny:
+    # Only published on GHCR, no official Docker Hub image — third-party
+    # mirrors exist there (alcapone1933/scrutiny etc.), avoid them, they're
+    # not maintained by this project. omnibus = web UI + collector +
+    # embedded InfluxDB in one container, sufficient for monitoring just
+    # this one node — the split hub/collector/standalone-influxdb pattern
+    # is only needed for monitoring multiple physical hosts from one
+    # dashboard, not the case here. Pinned to a real version, not
+    # `latest-omnibus` — the project's own README calls that tag
+    # "dangerous," it can update the image without warning.
+    image: ghcr.io/analogj/scrutiny:v0.9.3-omnibus
+    container_name: scrutiny
+    cap_add:
+      - SYS_RAWIO   # smartctl access for SATA/SAS drives
+      - SYS_ADMIN   # smartctl access for NVMe drives — drop this if silo
+                    # genuinely has no NVMe (narrower capability grant),
+                    # but harmless to leave if unsure.
+    ports:
+      # Host-side 8081, not Scrutiny's own default 8080 — that's already
+      # claimed by speedtest-tracker on this same node (see the Ports
+      # table in README.md). Container's own internal port is untouched.
+      - "8081:8080"
+      # InfluxDB's admin port (8086) is deliberately NOT published — the
+      # omnibus image talks to its own embedded InfluxDB over localhost
+      # inside the container, so nothing external needs this. Add a
+      # mapping later only if you want to query InfluxDB directly for
+      # debugging.
+    volumes:
+      - /srv/data/scrutiny/config:/opt/scrutiny/config
+      - /srv/data/scrutiny/influxdb:/opt/scrutiny/influxdb
+      - /run/udev:/run/udev:ro
+    devices:
+      # REPLACE ME BEFORE FIRST BRING-UP — this file is not run through
+      # render-configs.sh's envsubst (only files under config/ are), so
+      # these can't be auto-filled from .env.local the way other
+      # provisioning facts are. A wrong or missing device path here fails
+      # loudly at `docker compose up` (container won't start) rather than
+      # silently doing nothing — that's the safety net for this one, not
+      # a log-checking step afterward.
+      #
+      # Find silo's real physical disks (not partitions) with:
+      #   lsblk -d -o NAME,TYPE,SIZE,MODEL
+      # or:
+      #   smartctl --scan
+      #
+      # One entry per physical disk, e.g.:
+      #   - /dev/sda
+      #   - /dev/sdb
+      # For NVMe, pass the CONTROLLER node, not the namespace block device
+      # (/dev/nvme0, NOT /dev/nvme0n1):
+      #   - /dev/nvme0
+      - /dev/REPLACE_ME_disk1
+    restart: unless-stopped
+    # No login/auth exists in this app at all — not a documented "put it
+    # behind your own auth" design choice, just genuinely absent (no
+    # README section on it, no CVEs on file either — checked, not
+    # assumed). Same "LAN-reachable, not yet gated" acceptance as
+    # homepage/lldap on this fleet, not a new exception — see README
+    # Known gaps for the backlog to route this through Traefik/Authelia
+    # like everything else in that category eventually should.

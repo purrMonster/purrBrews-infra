@@ -10,10 +10,29 @@ services:
     # of requirement as sieve's Pi-hole (network_mode: host for real DNS
     # traffic), different underlying reason.
     network_mode: host
+    # Hardened per NetAlertX's own docs.netalertx.com/DOCKER_COMPOSE/
+    # "baseline" reference compose file (found 2026-09-01, after first
+    # writing this file against the repo's own less-hardened example
+    # docker-compose.yml — reconciled before ever bringing this up for
+    # real, not patched after). read_only + cap_drop: ALL + an explicit
+    # cap_add allowlist is strictly tighter than the plain cap_add-only
+    # version this started as.
+    read_only: true
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN     # ARP scanning, nmap, traceroute
       - NET_RAW       # raw socket operations
       - NET_BIND_SERVICE
+      - CHOWN         # data dir ownership fixups at startup
+      - SETUID
+      - SETGID
+    # Improves ARP scan accuracy per the same reference compose file —
+    # not required for netalertx to run, but documented as part of the
+    # maintainers' own recommended baseline, not something invented here.
+    sysctls:
+      net.ipv4.conf.all.arp_ignore: 1
+      net.ipv4.conf.all.arp_announce: 2
     environment:
       PORT: "20211"
       GRAPHQL_PORT: "20212"
@@ -32,7 +51,29 @@ services:
       # real interface name with (run this ON silo, not in the container):
       #   ip -o link show | awk -F': ' '!/lo|vir|docker/ {print $2}'
       APP_CONF_OVERRIDE: '{"SCAN_SUBNETS":"[''${SILO_LAN_SUBNET} --interface=${SILO_LAN_INTERFACE}'']"}'
+      # Added 2026-09-01, before first bring-up — NetAlertX does NOT
+      # require login by default (confirmed via docs.netalertx.com/SECURITY/
+      # before assuming otherwise), and this app has real CVE history for
+      # unauthenticated remote command execution / auth bypass
+      # (CVE-2024-46506, CVE-2025-32440 — both fixed well before the
+      # 26.8.5 tag pinned above, but the underlying lesson — don't run this
+      # one open — still applies given it's reachable by anything on the
+      # LAN, same reasoning that keeps Pi-hole's admin UI gated). Value
+      # comes from secrets.env.local (see ../generate-secrets.ps1 /
+      # ../decrypt-secrets.sh) — a randomly generated password, NOT
+      # prompted, same category as sieve's PIHOLE_WEBPASSWORD. NetAlertX's
+      # own docs describe this as a plaintext value the app hashes
+      # internally (SHA256) — not independently verified against the
+      # actual source, flagged in the README to confirm on first login.
+      SETPWD_enable_password: "true"
+      SETPWD_password: ${NETALERTX_PASSWORD}
     volumes:
+      # Bind mount, not the named docker volume NetAlertX's own reference
+      # compose file uses — deliberate deviation, for consistency with
+      # every other app in this fleet's /srv/data/<app> convention (easier
+      # to locate/back up than a named volume would be). Nothing
+      # netalertx-specific requires a named volume; this is a plain
+      # Compose volume-type choice, orthogonal to the app's own behavior.
       - /srv/data/netalertx:/data
       # NetAlertX's docs use a host-localtime bind mount for timezone,
       # not a TZ env var like every other app in this repo — kept as
@@ -41,5 +82,10 @@ services:
       # works for their scheduler/logging.
       - /etc/localtime:/etc/localtime:ro
     tmpfs:
-      - /tmp
+      # noexec/nosuid/nodev per the reference compose file — meaningful
+      # hardening with no functional downside for an app that has no
+      # reason to exec anything out of /tmp. uid/gid match PORT's default
+      # PUID/PGID (20211) — override both together if you ever set
+      # PUID/PGID to something else.
+      - "/tmp:uid=20211,gid=20211,mode=1700,rw,noexec,nosuid,nodev"
     restart: unless-stopped

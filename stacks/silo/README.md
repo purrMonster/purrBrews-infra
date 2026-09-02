@@ -11,8 +11,12 @@ Apps come up in this order:
 1. **unbound** — recursive resolver feeding sieve's Pi-hole; no dependencies
 2. **homepage** — stopgap dashboard; not part of Section 18.3's own sequence, brought up early since it doesn't depend on or block anything
 3. **netalertx** — LAN device discovery/presence alerting; no dependencies
-4. speedtest tracker, komodo, scrutiny, diun — not built yet (no
-   interdependencies between these four, any order is fine)
+4. **speedtest tracker**, **komodo**, **scrutiny**, **diun** — no
+   interdependencies between these four, any order is fine. **komodo is
+   the one that matters beyond silo itself**: it's what's meant to manage
+   containers on percolator/cellar/mochaPot too, once those nodes exist —
+   see its own section below and `stacks/_templates/komodo-periphery/`
+   for the reusable piece those future nodes will need.
 
 **crowdsec lives on `stacks/sieve/`, not here** (decided 2026-09-01,
 despite Section 18.3 naming silo as its home) — see
@@ -39,8 +43,17 @@ here shares a port space with sieve's table in `stacks/sieve/README.md`.
 |------|-------|-------|-------|
 | 53 | tcp+udp | unbound | Recursive resolver — access-control restricted to sieve only, see below. |
 | 3000 | tcp | homepage | Stopgap dashboard, LAN-reachable directly — not yet routed through Traefik. |
-| 20211 | tcp | netalertx | Web UI. `network_mode: host`, same category as sieve's Pi-hole — no `ports:` list of its own, binds directly on the host. |
-| 20212 | tcp | netalertx | GraphQL API — opened to the LAN alongside 20211 on the assumption the browser UI calls it directly, not verified as server-side-only. See Known gaps. |
+| 20211 | tcp | netalertx | Web UI, password-protected (see below). `network_mode: host`, same category as sieve's Pi-hole — no `ports:` list of its own, binds directly on the host. |
+| 20212 | tcp | netalertx | GraphQL API — bound on the host (host networking) but deliberately **not** given a LAN-wide ufw rule (see netalertx's own section) — open it only if the UI turns out to need direct browser access to it, which isn't confirmed either way. |
+| 8080 | tcp | speedtest-tracker | Web UI. |
+| 8443 | tcp | speedtest-tracker | Web UI, HTTPS. |
+| 8081 | tcp | scrutiny | Web UI — moved off Scrutiny's own default 8080 to dodge the speedtest-tracker collision above (container's own internal port is still 8080, only the host-side publish moved). No auth in this app at all — see Known gaps. |
+| 9120 | tcp | komodo | Core's web UI/API. Also needs to accept connections from future nodes' Periphery agents once percolator/cellar/mochaPot exist — see komodo's own section. |
+
+Not published to the host at all, for contrast: scrutiny's embedded
+InfluxDB (8086 — reached over loopback inside its own container, nothing
+external needs it), diun and its docker-socket-proxy sidecar (no web UI
+or API surface, nothing to publish).
 
 ## Secrets: SOPS+age
 
@@ -141,14 +154,34 @@ prompts for these if still `REPLACE_ME` — see above):
 ip -o link show | awk -F': ' '!/lo|vir|docker/ {print $2}'   # run on silo itself
 ```
 
+Also needs a secret, unlike unbound/homepage: `NETALERTX_PASSWORD` (see
+`generate-secrets.ps1` on roastery, `Set-SopsSecretIfAbsent` for
+`netalertx.sops.yaml`) — a randomly generated login password.
+**Deliberately not left unauthenticated**: NetAlertX has no login
+requirement by default, and has real published CVE history for
+unauthenticated remote command execution / auth bypass (see the runbook's
+2026-09-01 entry). The pinned image tag postdates the fixes for those
+specific CVEs, but running it open to the whole LAN regardless wasn't
+worth it — same reasoning that keeps Pi-hole's admin UI gated on sieve.
+`./setup-secrets.sh` picks this up automatically the same way it does
+every other secret — nothing extra to run.
+
 Then:
 
 ```sh
 sudo mkdir -p /srv/data/netalertx
 sudo ufw allow from 192.168.0.0/24 to any port 20211 proto tcp
-sudo ufw allow from 192.168.0.0/24 to any port 20212 proto tcp
 ./compose.sh netalertx up -d
 ```
+
+Only 20211 gets a LAN-wide ufw rule — 20212 (GraphQL) deliberately does
+not, since it's not confirmed whether the browser UI needs to reach it
+directly or everything's proxied through 20211 internally (NetAlertX's
+own docs don't say either way). If the UI is visibly broken (check the
+browser's network tab for failed requests to port 20212) once it's up,
+that's the signal to add `sudo ufw allow from 192.168.0.0/24 to any port
+20212 proto tcp` too — don't open it preemptively given this app's CVE
+history above.
 
 **Verify it's actually scanning something before trusting the device
 list** — this is the exact "runs clean, does nothing" failure mode a real
@@ -159,12 +192,150 @@ zero devices found):
 docker logs netalertx --tail 50   # look for scan activity, not just a clean startup
 ```
 
-Then open `http://<SILO_LAN_IP>:20211` and confirm it actually lists
-real devices on your LAN — not just silo and the gateway, which is what
-a wrong `SILO_LAN_INTERFACE` looks like (see the runbook's 2026-09-01
-entry for the real GitHub discussion this pattern is based on). If the
-device count looks obviously short, double check `SILO_LAN_INTERFACE`
-against the command above before assuming it's a scan-timing issue.
+Then open `http://<SILO_LAN_IP>:20211`, log in with the password from
+`netalertx/secrets.env.local` (`NETALERTX_PASSWORD` — no separate
+username field, per NetAlertX's docs, not independently confirmed until
+you actually see the login screen), and confirm it actually lists real
+devices on your LAN — not just silo and the gateway, which is what a
+wrong `SILO_LAN_INTERFACE` looks like (see the runbook's 2026-09-01 entry
+for the real GitHub discussion this pattern is based on). If the device
+count looks obviously short, double check `SILO_LAN_INTERFACE` against
+the command above before assuming it's a scan-timing issue.
+
+### speedtest-tracker
+
+```sh
+sudo mkdir -p /srv/data/speedtest-tracker/config
+sudo ufw allow from 192.168.0.0/24 to any port 8080 proto tcp
+sudo ufw allow from 192.168.0.0/24 to any port 8443 proto tcp
+./compose.sh speedtest-tracker up -d
+```
+
+Log in at `http://<SILO_LAN_IP>:8080` with `barista` / the password from
+`speedtest-tracker/secrets.env.local` (`SPEEDTEST_TRACKER_ADMIN_PASSWORD`)
+— **not** the image's own documented default (`admin@example.com` /
+`password`), which never gets created here since `ADMIN_EMAIL`/
+`ADMIN_PASSWORD`/`ADMIN_NAME` are set before first boot.
+
+**Verify a speed test actually runs** — this app's own most common
+first-deploy failure, per multiple real GitHub issues, is the UI silently
+showing "no speedtest scheduled" forever with no error:
+
+```sh
+docker logs speedtest-tracker --tail 50   # look for a scheduler tick, not just a clean startup
+```
+
+If nothing's run within the hour (`SPEEDTEST_SCHEDULE` is `0 * * * *`,
+on the hour), check that variable made it into the container correctly
+before assuming it's just slow.
+
+### scrutiny
+
+**Before bringing this up**, find silo's real physical disks and edit
+`scrutiny/docker-compose.yml`'s `devices:` list — this is a genuine
+manual, one-time edit, not something `setup-secrets.sh` can fill in (that
+script only ever touches `.env.local`, never a `docker-compose.yml`
+directly):
+
+```sh
+lsblk -d -o NAME,TYPE,SIZE,MODEL   # or: smartctl --scan
+```
+
+Replace the placeholder `/dev/REPLACE_ME_disk1` entry with one line per
+real physical disk (not partitions) — `/dev/sda`, `/dev/sdb`, etc. For
+NVMe, use the controller node (`/dev/nvme0`), not the namespace block
+device (`/dev/nvme0n1`). Getting this wrong fails loudly at `docker
+compose up` (the device doesn't exist) rather than starting successfully
+with no disk access — that's the safety net here.
+
+```sh
+sudo mkdir -p /srv/data/scrutiny/config /srv/data/scrutiny/influxdb
+sudo ufw allow from 192.168.0.0/24 to any port 8081 proto tcp
+./compose.sh scrutiny up -d
+```
+
+Reachable at `http://<SILO_LAN_IP>:8081` — **no login**, see Known gaps.
+Confirm it actually sees your disks (not just that the container started):
+open the UI and check every physical disk shows up with real S.M.A.R.T.
+data, not an error/missing state.
+
+### diun
+
+No `.env.local`/secrets changes needed — nothing here is a secret (no web
+UI, no login, see Known gaps).
+
+```sh
+sudo mkdir -p /srv/data/diun
+./compose.sh diun up -d
+```
+
+Confirm the docker-socket-proxy sidecar actually works before trusting
+this — there's a real, previously reported unresolved connectivity issue
+with this exact pattern (see `diun/docker-compose.yml`'s own comment):
+
+```sh
+docker logs diun --tail 50   # look for a completed scan of your containers, not a connection error
+```
+
+If it shows a connection failure reaching `diun-docker-socket-proxy`, the
+documented fallback (less safe, simpler) is dropping the proxy sidecar
+from `diun/docker-compose.yml` entirely and pointing
+`DIUN_PROVIDERS_DOCKER_ENDPOINT` at `unix:///var/run/docker.sock` with a
+direct `:ro` bind mount instead.
+
+**No notification channel is configured yet — deliberately, not an
+oversight.** Diun will watch and log what it finds (`docker logs diun`),
+but has nowhere to send it until a channel gets picked (Telegram, ntfy, a
+generic webhook, etc. — see the runbook's 2026-09-01 entry for the
+options). This is worth deciding together with the still-open CrowdSec
+remote-unban-method backlog item (`stacks/sieve/README.md`'s crowdsec
+section) — a Telegram or Nextcloud Talk bot could plausibly serve both.
+
+### komodo
+
+The most involved app on silo so far — three containers (Mongo, Core,
+Periphery), and the one other future nodes will depend on. Read the
+compose file's own header comment before bringing this up, especially
+the AVX preflight check:
+
+```sh
+grep avx /proc/cpuinfo   # MUST show something — MongoDB 5.0+ crashes outright without it
+```
+
+If that comes back empty, stop here — this compose file needs rethinking
+(see its header comment) before proceeding, not just retrying.
+
+```sh
+sudo mkdir -p /srv/data/komodo/mongo-data /srv/data/komodo/mongo-config \
+              /srv/data/komodo/keys /srv/data/komodo/backups
+sudo mkdir -p /etc/komodo   # deliberately NOT under /srv/data — see the compose file's comment
+sudo ufw allow from 192.168.0.0/24 to any port 9120 proto tcp
+./compose.sh komodo up -d
+```
+
+Log in at `http://<SILO_LAN_IP>:9120` with `barista` / the password from
+`komodo/secrets.env.local` (`KOMODO_INIT_ADMIN_PASSWORD`) — again, not
+the official reference file's own default (`admin`/`changeme`), never
+created here.
+
+**Treat this app's credentials with real weight, not homelab-casual
+weight**: `KOMODO_JWT_SECRET`, `KOMODO_WEBHOOK_SECRET`, and the admin
+account together control something that has root-equivalent access (via
+Periphery's Docker socket mount) to every node Komodo ends up managing —
+see the compose file's own comment on `komodo-periphery`'s volumes for
+why. This isn't a bigger deal than, say, sieve's age private key, but
+it's in that same category, not the category of "another app's admin
+password."
+
+**Preparing percolator/cellar/mochaPot for Komodo management**, once
+those nodes physically exist: copy
+`stacks/_templates/komodo-periphery/docker-compose.yml` into that node's
+own stack directory, follow the setup steps in its header comment
+(get an onboarding key from silo's Komodo UI, fill in the node's real
+name/TZ/silo's LAN IP), and open port 9120 to that node's LAN IP on silo
+if the existing ufw rule above doesn't already cover it. Nothing about
+this needs Komodo Core or Mongo touched again — only a new Periphery
+agent per node.
 
 ## Known gaps / things to double-check before relying on this
 
@@ -175,11 +346,6 @@ against the command above before assuming it's a scan-timing issue.
   standing gap as lldap's admin UI on sieve.
 - `homepage` is a stopgap dashboard, not the real one — see the runbook
   backlog for the DIY replacement, still undesigned.
-- `netalertx`'s GraphQL port (20212) is opened to the whole LAN subnet
-  alongside the web UI (20211), on the assumption the browser calls it
-  directly — not confirmed against the actual app's network traffic. If
-  it turns out to be server-side-only, narrow that ufw rule to
-  loopback/localhost only.
 - `netalertx`'s image tag (`26.8.5`) is pinned to what was current as of
   2026-09-01 — same "check before first real deploy, or wait for Diun"
   caveat as `unbound`'s tag above.
@@ -187,3 +353,41 @@ against the command above before assuming it's a scan-timing issue.
   reconciled against silo's actual host user, so files under
   `/srv/data/netalertx` may not be owned by `barista`. Only matters if
   you need to touch that directory directly from the host shell.
+- `netalertx`'s `SETPWD_password` is assumed to take a plaintext value
+  (hashed internally by the app) based on how NetAlertX's own docs show
+  the example — not confirmed against the actual source. If the login
+  screen rejects the real password from `secrets.env.local`, this
+  assumption is the first thing to check.
+- `netalertx`'s GraphQL port (20212) is bound on the host but has no ufw
+  rule by default — see its own section above for why (unconfirmed
+  whether the browser needs direct access to it, and this app's CVE
+  history made "open it just in case" the wrong default this time).
+- `speedtest-tracker` runs with the LinuxServer image's own default
+  `PUID`/`PGID` — same accepted gap, same reasoning, as `netalertx`'s
+  above.
+- `scrutiny` has **no authentication of any kind** — not a documented
+  design choice by its maintainers (no CVEs either, this is just a real
+  absence), same "LAN-reachable, not yet gated" acceptance as
+  `homepage`/`lldap`. Route it through Traefik/Authelia along with those,
+  when that backlog item gets picked up — don't treat this one as lower
+  priority just because it was found later.
+- `scrutiny`'s `cap_add: SYS_ADMIN` (needed for NVMe smartctl access) is
+  left in place even though it's not confirmed silo actually has an NVMe
+  drive — narrow to just `SYS_RAWIO` if it turns out silo is SATA/SAS
+  only, once that's checked.
+- `diun`'s `tecnativa/docker-socket-proxy` pin (`0.4.2`) came from a
+  GitHub releases page after Docker Hub's own tag listing returned
+  inconsistent-looking results — re-verify before treating this as a
+  long-term pin, same honesty as `unbound`'s digest note.
+- `diun` has no notification channel configured — deliberately deferred,
+  see its own section above. It's watching and logging, just not alerting
+  anywhere yet.
+- `komodo`'s `PERIPHERY_DISABLE_CONTAINER_TERMINALS` is left at the
+  official default (`false`, remote container shell access allowed from
+  the Komodo UI) — not tightened, since Periphery's docker.sock access
+  already grants equivalent capability regardless of this flag; disabling
+  it would reduce UI convenience without reducing actual risk.
+- `komodo`'s MongoDB AVX requirement is flagged prominently in the
+  compose file and README, but hasn't been checked against silo's actual
+  CPU from this session (no execution access) — this is the single
+  most likely reason first bring-up fails outright if skipped.

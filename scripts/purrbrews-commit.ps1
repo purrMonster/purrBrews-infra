@@ -72,6 +72,21 @@
   confirmation prompt for a while, or run this script again shortly after.
   Doesn't affect a cold first run.
 
+.PARAMETER MaxSubjectChars
+  Hard cap on the final commit message length, enforced in THIS SCRIPT, not
+  just requested in the prompt. Added 2026-09-02: telling a small local
+  model "under 50 characters total" in the prompt text is not enough on its
+  own -- confirmed after this project's own Conventional-Commits prompt
+  rewrite still produced long, multi-sentence output despite saying exactly
+  that. Small models are unreliable at obeying a hard numeric constraint
+  like a character count; the prompt below states this limit (so the model
+  at least aims for something short) but Enforce-SubjectLength below is
+  what actually guarantees it, by collapsing the response to one line and
+  truncating at a word boundary if the model still went over. If you see a
+  "Model's response was N chars" warning often, either the model isn't a
+  good fit for this or the limit is set unrealistically low for it --
+  raising -MaxSubjectChars is a legitimate fix too, not just a fallback.
+
 .EXAMPLE
   .\scripts\purrbrews-commit.ps1
 
@@ -88,7 +103,8 @@ param(
   [string]$Model = "llama3.2:3b",
   [string]$OllamaUrl = "http://localhost:11434",
   [int]$NumCtx = 8192,
-  [string]$KeepAlive = "10m"
+  [string]$KeepAlive = "10m",
+  [int]$MaxSubjectChars = 50
 )
 
 $ErrorActionPreference = "Stop"
@@ -208,12 +224,52 @@ function Strip-Fences([string]$Text) {
 
 Log "Asking $Model for a commit message"
 $commitPrompt = @"
-Write a git commit message for the following staged diff from the purrBrews-infra homelab repo. Follow Conventional Commits style (e.g. 'feat: ...', 'fix: ...', 'docs: ...', 'chore: ...'). Summary line under 72 characters, imperative mood, no trailing period. Add a short body (1-3 bullet points) only if the diff genuinely needs more explanation than the summary line gives. Output ONLY the commit message text, nothing else -- no preamble, no code fences.
+You are an expert developer assistant specialized in Git version control. Your task is to analyze the provided git diff and generate a super concise, professional commit message following the Conventional Commits specification. ### Rules:
+1. Format: Use the structure ``<type>(<scope>): <short description in lowercase>``
+2. Allowed Types: feat, fix, docs, style, refactor, test, chore, perf, ci, build.
+3. Length: The entire message MUST be under $MaxSubjectChars characters total. This is a hard limit -- there is no room for a body, footer, or explanation of any kind, ever.
+4. Tone: Use the imperative mood, present tense.
+5. Content: Focus strictly on the single most important what of the change. Do not list every file changed or every detail -- pick the one thing that matters most and say only that.
+6. Output: Return ONLY the final raw commit message string, as one line. Do not include markdown code blocks, quotes, introductions, reasoning, or explanations of any kind.
+
+Example:
+DIFF:
+diff --git a/api/users.py b/api/users.py
++def get_user(id):
++    return db.query(User).get(id)
+Output:
+feat(api): add get_user endpoint
 
 DIFF:
 $diffForModel
 "@
-$commitMsg = Strip-Fences (Invoke-Ollama $commitPrompt)
+$commitMsgRaw = Strip-Fences (Invoke-Ollama $commitPrompt)
+if (-not $commitMsgRaw) { Die "Model returned an empty commit message -- aborting rather than committing with nothing. Staged changes are left staged." }
+
+function Enforce-SubjectLength([string]$Text, [int]$MaxChars) {
+  # The actual fix for "the model wrote a huge commit message despite the
+  # prompt saying under $MaxChars characters" (2026-09-02) -- a prompt
+  # instruction alone doesn't reliably bound a small local model's output
+  # length, no matter how the wording is tightened. This collapses
+  # whatever came back to one line (a rambling multi-sentence answer from
+  # a small model is padding, not a deliberate Conventional-Commits body --
+  # see rule 3 above, which now says there's never room for one) and, if
+  # it's still over the limit, truncates at the last word boundary so a
+  # word never gets cut in half.
+  $oneLine = ($Text -split '\r?\n' | Where-Object { $_.Trim() -ne '' }) -join ' '
+  $oneLine = $oneLine.Trim()
+  if ($oneLine.Length -le $MaxChars) { return $oneLine }
+  $cut = $oneLine.Substring(0, $MaxChars)
+  $lastSpace = $cut.LastIndexOf(' ')
+  if ($lastSpace -gt 0) { $cut = $cut.Substring(0, $lastSpace) }
+  return $cut.TrimEnd('.', ',', ';', ':', ' ')
+}
+
+$commitMsg = Enforce-SubjectLength $commitMsgRaw $MaxSubjectChars
+if ($commitMsg.Length -lt $commitMsgRaw.Trim().Length) {
+  Warn "$Model ignored the '$MaxSubjectChars characters' rule -- its raw response was $($commitMsgRaw.Trim().Length) chars. Truncated to fit; raw output below so you can judge whether the truncated version still makes sense, or whether to just write this one by hand."
+  Warn "Raw model output: $commitMsgRaw"
+}
 if (-not $commitMsg) { Die "Model returned an empty commit message -- aborting rather than committing with nothing. Staged changes are left staged." }
 
 Write-Host "`n----------------------------------------------------------------------"
@@ -236,8 +292,34 @@ if (-not $Yes) {
 
 # ---------------------------------------------------------------------------
 # Commit, push. No runbook.md touched here -- see synopsis/description.
+#
+# Fixed 2026-09-01: this used to be `git commit -m "$commitMsg"`, which
+# broke the moment the model's output contained a literal double-quote
+# character (it happily did -- e.g. wrapping a phrase in quotes for
+# emphasis, or a filename in backticks). PowerShell doesn't re-escape an
+# embedded `"` when building the command line it hands to a native exe, so
+# git.exe actually received something like `-m "feat: Add "` as the whole
+# -m value, then every subsequent word in the message became its own bare
+# argument -- which git interpreted as pathspecs, producing exactly the
+# "pathspec 'in' did not match any file(s)" pileup this script hit on a
+# real commit message ("Add "Ports in use on this host" table to both
+# `stacks/sieve/README.md` and `stacks/silo/README.md`").
+#
+# Fix: never hand an arbitrary string through PowerShell's native-argument
+# quoting at all. Write it to a temp file and use `git commit -F <file>`,
+# which git reads byte-for-byte -- immune to quotes, backticks, or
+# anything else the model puts in there. Tightened the prompt above too
+# (no backticks/quotes) so the output looks like a normal commit subject,
+# but the -F fix is what actually makes this safe regardless of what the
+# model does.
 # ---------------------------------------------------------------------------
-git commit -m "$commitMsg"
+$commitMsgFile = Join-Path ([System.IO.Path]::GetTempPath()) "purrbrews-commit-msg-$([guid]::NewGuid()).txt"
+try {
+  [System.IO.File]::WriteAllText($commitMsgFile, $commitMsg, [System.Text.UTF8Encoding]::new($false))
+  git commit -F $commitMsgFile
+} finally {
+  Remove-Item -Path $commitMsgFile -ErrorAction SilentlyContinue
+}
 Log "Committed. Pushing..."
 git push
 Log "Done."

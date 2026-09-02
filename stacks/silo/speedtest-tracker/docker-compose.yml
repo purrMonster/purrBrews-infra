@@ -1,0 +1,45 @@
+services:
+  speedtest-tracker:
+    # Project's own GHCR image (ghcr.io/alexjustesen/speedtest-tracker) is
+    # abandoned — stuck at v0.19.0, ~2 years stale. The project's own
+    # README now says the image is built/published by LinuxServer.io
+    # instead — checked before pinning, not assumed from an old guide, same
+    # discipline as netalertx's namespace move.
+    image: lscr.io/linuxserver/speedtest-tracker:v1.15.0-ls170
+    container_name: speedtest-tracker
+    ports:
+      - "8080:80"
+      - "8443:443"
+    environment:
+      # PUID/PGID left at the image's own default (not guessed/hardcoded) —
+      # same accepted gap as netalertx's PUID/PGID, see README Known gaps.
+      TZ: ${TZ}
+      APP_TIMEZONE: ${TZ}
+      APP_URL: http://${SILO_LAN_IP}:8080
+      DB_CONNECTION: sqlite
+      # Laravel encryption key — REQUIRED, no default, app won't run
+      # correctly without one. Generated in generate-secrets.ps1 as
+      # "base64:<32 random bytes>", the exact format Laravel expects.
+      APP_KEY: ${SPEEDTEST_TRACKER_APP_KEY}
+      # Overrides the LinuxServer image's fixed default admin account
+      # (admin@example.com / password, auto-created on first boot) —
+      # confirmed via the project's own docs before assuming a random
+      # generated account was even possible; without these three set,
+      # first bring-up would briefly exist with a well-known public
+      # default credential, same class of gap NetAlertX almost shipped
+      # with unaudited.
+      ADMIN_NAME: barista
+      ADMIN_EMAIL: admin@silo.local
+      ADMIN_PASSWORD: ${SPEEDTEST_TRACKER_ADMIN_PASSWORD}
+      # Cron expression — speed tests do NOT run automatically just from
+      # the container being up; this is the #1 real-world gotcha for this
+      # app (multiple GitHub issues: "no speedtest scheduled" with no
+      # error, just silence, if this is unset or wrong). Hourly, on the
+      # hour — adjust if you want a different cadence.
+      SPEEDTEST_SCHEDULE: "0 * * * *"
+      # PUBLIC_DASHBOARD defaults to false (unauthenticated public view
+      # disabled) — confirmed via docs, deliberately left unset here to
+      # keep that secure default rather than touching it.
+    volumes:
+      - /srv/data/speedtest-tracker/config:/config
+    restart: unless-stopped

@@ -123,15 +123,60 @@ function Set-SopsSecretIfAbsent {
 Write-Host "==> silo secrets (secrets/silo/*.sops.yaml)"
 
 # --- Per-app secrets go here ------------------------------------------
-# Nothing yet — silo's apps (Unbound, CrowdSec, NetAlertX, Speedtest
-# Tracker, Komodo, Scrutiny, Diun) haven't been built. Add one
-# Set-SopsSecretIfAbsent call per secret value as each app gets built,
-# same pattern as stacks/sieve/generate-secrets.sh uses per app. Example,
-# for when Komodo needs a webhook secret:
-#
-#   Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
-#     -Key "KOMODO_WEBHOOK_SECRET" -Value (New-RandomSecret 32)
-#
+# One Set-SopsSecretIfAbsent call per secret value, added as each app
+# gets built, same pattern as stacks/sieve/generate-secrets.sh uses per
+# app.
+
+# netalertx — added 2026-09-01, same bring-up that added the app itself.
+# Randomly generated, not prompted: same category as sieve's own
+# PIHOLE_WEBPASSWORD (a login credential this project sets, not one that
+# has to match an external account). NetAlertX does not require login by
+# default (docs.netalertx.com/SECURITY/) and has real CVE history for
+# unauthenticated RCE/auth-bypass (CVE-2024-46506, CVE-2025-32440) — the
+# pinned image tag postdates both fixes, but running it open on the LAN
+# regardless wasn't worth it. 16 bytes, not the usual 32 — this one's a
+# password a human might actually type into a login form sometimes,
+# mirroring PIHOLE_WEBPASSWORD's own shorter length for the same reason.
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "netalertx.sops.yaml") `
+  -Key "NETALERTX_PASSWORD" -Value (New-RandomSecret 16)
+
+# speedtest-tracker — added 2026-09-01. APP_KEY is a Laravel encryption
+# key, REQUIRED (the app doesn't run correctly without one, no insecure
+# default to worry about here) — "base64:" prefix is the exact format
+# Laravel expects, confirmed via the project's own docs before assuming
+# New-RandomSecret's plain output would work as-is. ADMIN_PASSWORD
+# replaces the LinuxServer image's fixed default account
+# (admin@example.com / password) — same "don't ship a known default
+# credential" reasoning as netalertx above.
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "speedtest-tracker.sops.yaml") `
+  -Key "SPEEDTEST_TRACKER_APP_KEY" -Value "base64:$(New-RandomSecret 32)"
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "speedtest-tracker.sops.yaml") `
+  -Key "SPEEDTEST_TRACKER_ADMIN_PASSWORD" -Value (New-RandomSecret 16)
+
+# komodo — added 2026-09-01. Five secrets, more than any other silo app so
+# far, proportional to what Komodo actually holds: root-equivalent access
+# (via Periphery's docker.sock mount) to every node it manages, not just
+# silo. The official reference file ships every one of these as an
+# insecure placeholder (admin/admin, a_random_secret, a_random_jwt_secret,
+# changeme) — none of those are used here. Database credentials are
+# treated as real secrets (not just a fixed non-secret username) given
+# what's actually at stake if this specific app's data is compromised.
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
+  -Key "KOMODO_DATABASE_USERNAME" -Value "komodo"
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
+  -Key "KOMODO_DATABASE_PASSWORD" -Value (New-RandomSecret 32)
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
+  -Key "KOMODO_JWT_SECRET" -Value (New-RandomSecret 32)
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
+  -Key "KOMODO_WEBHOOK_SECRET" -Value (New-RandomSecret 32)
+Set-SopsSecretIfAbsent -SopsFile (Join-Path $SecretsDir "komodo.sops.yaml") `
+  -Key "KOMODO_INIT_ADMIN_PASSWORD" -Value (New-RandomSecret 16)
+
+# scrutiny, diun — no secrets needed. scrutiny has no auth at all to
+# protect (see stacks/silo/README.md's Known gaps); diun has no web UI or
+# API surface whatsoever, so there's nothing to log into either — see the
+# runbook's 2026-09-01 entry for both.
+
 # For a value that can't be randomly generated (an API token, etc.), use
 # -Prompt instead of -Value, same as sieve's CF_DNS_API_TOKEN/TUNNEL_TOKEN:
 #

@@ -1,0 +1,68 @@
+# Template, not a live app — copy this into a future node's own stack
+# directory (e.g. stacks/percolator/komodo-periphery/docker-compose.yml)
+# once that node actually exists, and fill in the two REPLACE_ME values
+# below before bringing it up. Added 2026-09-01 alongside silo's own
+# Komodo build, specifically because Komodo (on silo) is meant to manage
+# these future nodes' containers too — see stacks/silo/README.md's komodo
+# section and the runbook's 2026-09-01 entry for the full architecture.
+#
+# What this does: runs just the Periphery agent (no Core, no Mongo — those
+# stay on silo) so silo's Komodo Core can see and manage this node's
+# containers. Adapted from Komodo's own official
+# compose/periphery.compose.yaml (fetched verbatim 2026-09-01), same
+# reasoning as silo's own komodo/docker-compose.yml for why this isn't
+# just used as-is: explicit environment: block instead of env_file:, to
+# match this repo's own per-app convention.
+#
+# Setup, once copied into a real node's stack directory:
+#   1. Replace PERIPHERY_CONNECT_AS below with this node's actual name
+#      (percolator / cellar / mochaPot / ristretto).
+#   2. Get an onboarding key from silo's Komodo UI (Settings -> the
+#      relevant onboarding/servers section) and set
+#      PERIPHERY_ONBOARDING_KEY to it — this lets Periphery register
+#      itself as a new Server in Komodo on first connect, no manual key
+#      copying needed. It can be removed once the Server exists in
+#      Komodo's UI (the key's only needed for that first handshake).
+#   3. This node needs OUTBOUND reachability to silo on port 9120 — no
+#      inbound firewall rule needed on THIS node for Komodo itself (the
+#      connection direction is Periphery -> Core, a persistent outbound
+#      websocket, not the other way around — a real architecture change
+#      Komodo made in its v2 line, confirmed against the v2.0.0 release
+#      notes before relying on it). silo itself needs a ufw rule allowing
+#      this node's LAN IP to reach port 9120 if one doesn't already cover
+#      it broadly.
+#
+# Same root-equivalent caveat as silo's own Periphery: whoever controls
+# Komodo Core (on silo) can run arbitrary containers as root on THIS node
+# once this is connected. Not a misconfiguration to fix, just what
+# Periphery inherently grants — see silo's komodo/docker-compose.yml for
+# the fuller version of this note.
+services:
+  komodo-periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.2   # keep this in sync
+      # with whatever tag silo's own komodo-core/komodo-periphery are
+      # pinned to at the time this template actually gets used — check
+      # stacks/silo/komodo/docker-compose.yml for the current value
+      # rather than trusting this comment, which won't be kept updated.
+    container_name: komodo-periphery
+    init: true
+    environment:
+      TZ: REPLACE_ME   # match this node's own local.env.example TZ, once
+                        # that exists
+      PERIPHERY_CORE_ADDRESS: ws://REPLACE_ME_SILO_LAN_IP:9120
+      PERIPHERY_CONNECT_AS: REPLACE_ME_NODE_NAME
+      PERIPHERY_ONBOARDING_KEY: REPLACE_ME_ONBOARDING_KEY   # remove this
+        # line entirely once the Server already exists in Komodo's UI —
+        # it's only needed for the first-ever connection.
+      PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
+      PERIPHERY_ROOT_DIRECTORY: /etc/komodo
+      PERIPHERY_INCLUDE_DISK_MOUNTS: /etc/hostname
+    volumes:
+      - keys:/config/keys
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      - /etc/komodo:/etc/komodo
+    restart: unless-stopped
+
+volumes:
+  keys:

@@ -1,0 +1,79 @@
+services:
+  diun:
+    image: crazymax/diun:4.33.0
+    container_name: diun
+    command: serve
+    environment:
+      TZ: ${TZ}
+      DIUN_WATCH_WORKERS: "20"
+      DIUN_WATCH_SCHEDULE: "0 8 * * *"   # daily at 08:00
+      DIUN_WATCH_JITTER: "30s"
+      DIUN_PROVIDERS_DOCKER: "true"
+      # Talks to the socket-proxy sidecar below, never the raw socket
+      # directly — see that service's own comment for why.
+      DIUN_PROVIDERS_DOCKER_ENDPOINT: tcp://diun-docker-socket-proxy:2375
+      # Watch every container by default, not just ones labeled
+      # diun.enable=true (that's the image's own default) — deliberate:
+      # the whole point of running this is fleet-wide update awareness
+      # without having to remember to label each new app as it's added.
+      # Trade-off is noise if that turns out to be too broad; narrow it
+      # per-container with diun.enable=false labels if so, rather than
+      # flipping this back to opt-in.
+      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "true"
+      # Notification provider: none configured yet — deliberately, not an
+      # oversight. See README/runbook: this needs a real decision (which
+      # channel — Telegram, ntfy, a generic webhook, etc.), and there's
+      # already an open, undecided backlog item about wanting a Telegram
+      # or Nextcloud Talk bot for a different purpose (CrowdSec remote
+      # unban) that could plausibly share infrastructure with whatever's
+      # chosen here. Diun runs and watches without one — it just has
+      # nowhere to send what it finds yet; check `docker logs diun` in the
+      # meantime.
+    volumes:
+      # bbolt state DB — REQUIRED for persistence, not optional. Without
+      # this surviving a container recreate, Diun has no way to remember
+      # what it already reported and re-notifies about every already-known
+      # image on every restart.
+      - /srv/data/diun:/data
+    depends_on:
+      - diun-docker-socket-proxy
+    restart: unless-stopped
+
+  diun-docker-socket-proxy:
+    # Pinned to the latest tagged GitHub release found (2026-09-01) — a
+    # Docker Hub tag listing for this image returned inconsistent-looking
+    # results (mixed in what looked like PR-build tags), so this was
+    # cross-checked against the project's own GitHub releases page
+    # instead and trusted over the messier registry listing. Re-verify
+    # against github.com/Tecnativa/docker-socket-proxy/releases before
+    # relying on this long-term.
+    image: tecnativa/docker-socket-proxy:0.4.2
+    container_name: diun-docker-socket-proxy
+    environment:
+      # Least-privilege API surface — Diun only ever needs to list/inspect
+      # containers and images, nothing else. Every other endpoint this
+      # image can expose defaults to off; POST is explicitly disabled
+      # here too (Diun never needs to create/modify anything). A plain
+      # `:ro` bind mount of the raw socket does NOT actually restrict
+      # which API verbs are allowed over it — this proxy is the real
+      # mitigation, not a read-only flag on the socket mount.
+      CONTAINERS: "1"
+      IMAGES: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    # No ports published to the host at all — reached only by diun, over
+    # this compose project's own isolated per-directory network (compose.sh
+    # runs each app with --project-directory pointed at its own folder,
+    # which gives every app's containers a private default network nothing
+    # else in the fleet can reach).
+    #
+    # Known rough edge, not fully resolved anywhere found: at least one
+    # real report of Diun failing to reach a socket-proxy over exactly
+    # this tcp://<name>:2375 pattern ("Cannot connect to the Docker
+    # daemon"), left unresolved in the proxy's own issue tracker. If
+    # `docker logs diun` shows a connection failure after bring-up, the
+    # documented (less safe, simpler) fallback is dropping this sidecar
+    # entirely and pointing diun straight at a read-only raw socket mount
+    # instead — see the README's diun section.

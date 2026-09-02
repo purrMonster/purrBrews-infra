@@ -1,0 +1,126 @@
+# Adapted from Komodo's own official reference files (moghtech/komodo,
+# compose/mongo.compose.yaml + compose/compose.env, fetched verbatim
+# 2026-09-01) to this repo's conventions: every env var is listed
+# explicitly per service (not loaded via env_file: ./compose.env) so it
+# reads the same way every other app in this fleet does, and secrets come
+# from komodo/secrets.env.local via SOPS+age like everything else on silo,
+# not left at the official file's own insecure placeholder defaults
+# (admin/admin, a_random_secret, a_random_jwt_secret, changeme).
+#
+# BEFORE FIRST BRING-UP: confirm silo's CPU actually supports AVX.
+# MongoDB 5.0+ (mongo:7 below is well past that) requires it and crashes
+# outright on startup without it (`Illegal instruction (core dumped)`) —
+# a real, common failure on older hardware or a misconfigured Proxmox/KVM
+# VM CPU type. Check with:
+#   grep avx /proc/cpuinfo
+# If silo's CPU (or its VM's configured CPU model) doesn't show avx, this
+# whole compose file needs rethinking (a different Mongo version won't
+# help — the requirement is version-independent for 5.0+; the documented
+# alternative is FerretDB, a Postgres-backed Mongo-wire-protocol shim, not
+# attempted here since it wasn't needed to get this file written, but see
+# https://komo.do/docs/setup/mongo if AVX turns out to be missing).
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: komodo-mongo
+    labels:
+      komodo.skip:   # official label — prevents Komodo's own "stop all
+                      # containers" action from stopping its own database
+    command: --quiet --wiredTigerCacheSizeGB 0.25
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${KOMODO_DATABASE_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
+    volumes:
+      - /srv/data/komodo/mongo-data:/data/db
+      - /srv/data/komodo/mongo-config:/data/configdb
+    restart: unless-stopped
+
+  komodo-core:
+    image: ghcr.io/moghtech/komodo-core:2.3.2   # pinned, not the official
+                                                  # file's floating `:2` —
+                                                  # Komodo is central enough
+                                                  # to this fleet's future
+                                                  # that a silent minor/patch
+                                                  # bump on redeploy isn't
+                                                  # worth the convenience.
+    container_name: komodo-core
+    init: true
+    depends_on:
+      - mongo
+    ports:
+      - "9120:9120"
+    environment:
+      TZ: ${TZ}
+      KOMODO_DATABASE_ADDRESS: mongo:27017
+      KOMODO_DATABASE_USERNAME: ${KOMODO_DATABASE_USERNAME}
+      KOMODO_DATABASE_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
+      # Not routed through Traefik yet, same as every other silo app —
+      # used only for OAuth/webhook URL suggestions in the UI, not
+      # security-relevant on its own.
+      KOMODO_HOST: http://${SILO_LAN_IP}:9120
+      KOMODO_TITLE: purrBrews Komodo
+      # Lets Periphery connect once it presents this key — Core writes its
+      # own public key here on first boot; both containers share the same
+      # host directory (see volumes below) so this just works without
+      # manual key copying, same-node only. A future node's standalone
+      # Periphery (see ../../_templates/komodo-periphery/) needs the
+      # public key or an onboarding key instead — see that template.
+      KOMODO_PERIPHERY_PUBLIC_KEY: file:/config/keys/periphery.pub
+      KOMODO_LOCAL_AUTH: "true"
+      # Official default ships literally as admin/changeme — replaced with
+      # real generated values below, same "don't ship a known default
+      # credential" discipline as netalertx/speedtest-tracker just needed.
+      KOMODO_INIT_ADMIN_USERNAME: barista
+      KOMODO_INIT_ADMIN_PASSWORD: ${KOMODO_INIT_ADMIN_PASSWORD}
+      KOMODO_FIRST_SERVER_NAME: silo
+      KOMODO_WEBHOOK_SECRET: ${KOMODO_WEBHOOK_SECRET}
+      KOMODO_JWT_SECRET: ${KOMODO_JWT_SECRET}
+      KOMODO_JWT_TTL: 1-day
+      KOMODO_MONITORING_INTERVAL: 15-sec
+      KOMODO_RESOURCE_POLL_INTERVAL: 1-hr
+      # Deliberate change from the official default (false) — this
+      # instance will eventually hold root-equivalent access (via
+      # Periphery's docker.sock mount) to every node in the fleet;
+      # leaving open signups on is a bigger blast radius than the
+      # official file's generic default assumes.
+      KOMODO_DISABLE_USER_REGISTRATION: "true"
+    volumes:
+      - /srv/data/komodo/keys:/config/keys
+      - /srv/data/komodo/backups:/backups
+    restart: unless-stopped
+
+  komodo-periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.2
+    container_name: komodo-periphery
+    init: true
+    depends_on:
+      - komodo-core
+    environment:
+      TZ: ${TZ}
+      PERIPHERY_CORE_ADDRESS: ws://komodo-core:9120
+      PERIPHERY_CONNECT_AS: silo
+      PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
+      PERIPHERY_ROOT_DIRECTORY: /etc/komodo
+      PERIPHERY_INCLUDE_DISK_MOUNTS: /etc/hostname
+    volumes:
+      - /srv/data/komodo/keys:/config/keys
+      # The single biggest security consideration in this whole file:
+      # unrestricted Docker socket access. Whoever controls Komodo Core's
+      # web UI (or its JWT/webhook secrets) effectively has root on every
+      # node running a Periphery agent, since Periphery can run arbitrary
+      # containers as root on the host it's on. Treat KOMODO_JWT_SECRET,
+      # KOMODO_WEBHOOK_SECRET, and the admin account's credentials with
+      # the same care as a root SSH key — not just "another app
+      # password." This is inherent to what Komodo does, not a
+      # misconfiguration to fix.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      # Must be the IDENTICAL path inside and outside the container or
+      # Docker "gets confused" (documented directly by the maintainers —
+      # github.com/moghtech/komodo/discussions/180) — kept at the
+      # project's own default (/etc/komodo) rather than moved under
+      # /srv/data like this fleet's other persistent data, since this
+      # isn't really app data, it's the actual operational root Periphery
+      # uses to find every stack/repo it manages on this host.
+      - /etc/komodo:/etc/komodo
+    restart: unless-stopped
