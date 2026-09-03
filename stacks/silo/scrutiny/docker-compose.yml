@@ -31,26 +31,17 @@ services:
       - /srv/data/scrutiny/influxdb:/opt/scrutiny/influxdb
       - /run/udev:/run/udev:ro
     devices:
-      # REPLACE ME BEFORE FIRST BRING-UP — this file is not run through
-      # render-configs.sh's envsubst (only files under config/ are), so
-      # these can't be auto-filled from .env.local the way other
-      # provisioning facts are. A wrong or missing device path here fails
-      # loudly at `docker compose up` (container won't start) rather than
-      # silently doing nothing — that's the safety net for this one, not
-      # a log-checking step afterward.
-      #
-      # Find silo's real physical disks (not partitions) with:
-      #   lsblk -d -o NAME,TYPE,SIZE,MODEL
-      # or:
-      #   smartctl --scan
-      #
-      # One entry per physical disk, e.g.:
-      #   - /dev/sda
-      #   - /dev/sdb
-      # For NVMe, pass the CONTROLLER node, not the namespace block device
-      # (/dev/nvme0, NOT /dev/nvme0n1):
-      #   - /dev/nvme0
-      - /dev/REPLACE_ME_disk1
+      # Filled in 2026-09-02 from silo's own `lsblk -d -o NAME,TYPE,SIZE,MODEL`
+      # output: a single physical disk, sda, 931.5G, Seagate BarraCuda
+      # ST1000LM035-1RK172 (a 2.5" spinning HDD, not NVMe -- SYS_ADMIN
+      # above stays harmless-but-unused for this specific disk, left in
+      # per its own comment rather than narrowed, in case a second/NVMe
+      # disk is ever added to this node later). This file isn't run
+      # through render-configs.sh's envsubst (only files under config/
+      # are), so this had to be a manual edit rather than a REPLACE_ME
+      # in .env.local -- if silo's disks ever change, this line needs a
+      # matching manual update, `lsblk` again to re-check.
+      - /dev/sda
     restart: unless-stopped
     # No login/auth exists in this app at all — not a documented "put it
     # behind your own auth" design choice, just genuinely absent (no

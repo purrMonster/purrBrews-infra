@@ -3,8 +3,9 @@
 # 2026-09-01) to this repo's conventions: every env var is listed
 # explicitly per service (not loaded via env_file: ./compose.env) so it
 # reads the same way every other app in this fleet does, and secrets come
-# from komodo/secrets.env.local via SOPS+age like everything else on silo,
-# not left at the official file's own insecure placeholder defaults
+# from komodo/secrets.env.local, generated locally by generate-secrets.sh
+# like everything else on silo, not left at the official file's own
+# insecure placeholder defaults
 # (admin/admin, a_random_secret, a_random_jwt_secret, changeme).
 #
 # BEFORE FIRST BRING-UP: confirm silo's CPU actually supports AVX.

@@ -55,27 +55,24 @@ InfluxDB (8086 — reached over loopback inside its own container, nothing
 external needs it), diun and its docker-socket-proxy sidecar (no web UI
 or API surface, nothing to publish).
 
-## Secrets: SOPS+age
+## Secrets: local generation
 
-Different from sieve's stack (plain gitignored local generation) — see
-`secrets/README.md` for the full layout and the runbook's 2026-08-31
-"Moving to silo" entry for why. Two steps, split across where each has to
-run:
+Same pattern as sieve's stack: `generate-secrets.sh` runs directly on silo
+and writes real values straight into each app's `secrets.env.local` —
+gitignored, never committed. (Changed 2026-09-02: silo originally used a
+SOPS+age bridge instead — secrets generated and encrypted on roastery,
+committed as ciphertext, decrypted here — replaced fleet-wide with this
+simpler local-only approach; see that day's runbook entry for why.)
 
-1. **On roastery**: add a `Set-SopsSecretIfAbsent` call to
-   `generate-secrets.ps1` for any new secret, run it, `git add`/commit/push.
-2. **On silo**, after `git pull`: `./setup-secrets.sh` (runs
-   `./decrypt-secrets.sh` as one of its steps — see below) — needs the age
-   private key at `/etc/purrbrews/age/keys.txt` (copied from sieve once,
-   per `secrets/README.md`).
+Adding a new secret: add a `set_if_absent` (or `prompt_if_placeholder`)
+call to `generate-secrets.sh`, then just run it — right here on silo, no
+roastery step, no key to manage.
 
 ## First-time setup on silo
 
 ```sh
 cd /opt/purrbrews/stacks/silo
 chmod +x *.sh   # harmless if already set — see stacks/sieve/README.md's note on why
-
-command -v sops || echo "sops not installed — see secrets/README.md"
 
 ./setup-secrets.sh
 ```
@@ -87,8 +84,8 @@ doesn't exist, prompts for any `REPLACE_ME` value still in it (`SILO_LAN_IP`,
 `stacks/sieve/.env.local`'s own value exactly; `SILO_LAN_INTERFACE`/
 `SILO_LAN_SUBNET` as of 2026-09-01, for netalertx — see that app's own
 section below for how to find the real interface name; only `TZ` has a real
-default it won't ask about), runs `./decrypt-secrets.sh`,
-warns (without trying to fix) if a decrypted secret still has a `REPLACE_ME`
+default it won't ask about), runs `./generate-secrets.sh`,
+warns (without trying to fix) if a generated secret still has a `REPLACE_ME`
 in it, then runs `./render-configs.sh`. Safe to re-run any time — a value
 that's already set is never touched. See its own header comment for why
 this exists: Homepage's first real bring-up (2026-08-31) failed its host
@@ -155,8 +152,8 @@ ip -o link show | awk -F': ' '!/lo|vir|docker/ {print $2}'   # run on silo itsel
 ```
 
 Also needs a secret, unlike unbound/homepage: `NETALERTX_PASSWORD` (see
-`generate-secrets.ps1` on roastery, `Set-SopsSecretIfAbsent` for
-`netalertx.sops.yaml`) — a randomly generated login password.
+`generate-secrets.sh`'s netalertx section) — a randomly generated login
+password.
 **Deliberately not left unauthenticated**: NetAlertX has no login
 requirement by default, and has real published CVE history for
 unauthenticated remote command execution / auth bypass (see the runbook's
@@ -231,20 +228,21 @@ before assuming it's just slow.
 
 ### scrutiny
 
-**Before bringing this up**, find silo's real physical disks and edit
-`scrutiny/docker-compose.yml`'s `devices:` list — this is a genuine
-manual, one-time edit, not something `setup-secrets.sh` can fill in (that
-script only ever touches `.env.local`, never a `docker-compose.yml`
-directly):
+**Device path already filled in** (2026-09-02, from silo's own `lsblk -d
+-o NAME,TYPE,SIZE,MODEL`): silo has one physical disk, `/dev/sda` (931.5G,
+Seagate BarraCuda `ST1000LM035-1RK172`), already set in
+`scrutiny/docker-compose.yml`'s `devices:` list. If a disk is ever
+added/removed/replaced on silo, that list needs a matching manual edit —
+`setup-secrets.sh` never touches a `docker-compose.yml` directly, only
+`.env.local`, so this doesn't auto-update:
 
 ```sh
 lsblk -d -o NAME,TYPE,SIZE,MODEL   # or: smartctl --scan
 ```
 
-Replace the placeholder `/dev/REPLACE_ME_disk1` entry with one line per
-real physical disk (not partitions) — `/dev/sda`, `/dev/sdb`, etc. For
-NVMe, use the controller node (`/dev/nvme0`), not the namespace block
-device (`/dev/nvme0n1`). Getting this wrong fails loudly at `docker
+One line per real physical disk (not partitions) — `/dev/sda`, `/dev/sdb`,
+etc. For NVMe, use the controller node (`/dev/nvme0`), not the namespace
+block device (`/dev/nvme0n1`). Getting this wrong fails loudly at `docker
 compose up` (the device doesn't exist) rather than starting successfully
 with no disk access — that's the safety net here.
 
@@ -302,8 +300,13 @@ the AVX preflight check:
 grep avx /proc/cpuinfo   # MUST show something — MongoDB 5.0+ crashes outright without it
 ```
 
-If that comes back empty, stop here — this compose file needs rethinking
-(see its header comment) before proceeding, not just retrying.
+**Already checked for silo** (2026-09-02): `avx` shows on every core —
+clear to proceed. Kept as a documented step anyway, both as the safety
+net if silo's CPU/VM config ever changes, and as the thing to run on any
+future node before it gets its own Periphery (see below) — Mongo itself
+never runs anywhere but silo, but this is worth knowing regardless. If
+this ever comes back empty on a re-check, stop — this compose file needs
+rethinking (see its header comment), not just retrying.
 
 ```sh
 sudo mkdir -p /srv/data/komodo/mongo-data /srv/data/komodo/mongo-config \
@@ -323,9 +326,9 @@ weight**: `KOMODO_JWT_SECRET`, `KOMODO_WEBHOOK_SECRET`, and the admin
 account together control something that has root-equivalent access (via
 Periphery's Docker socket mount) to every node Komodo ends up managing —
 see the compose file's own comment on `komodo-periphery`'s volumes for
-why. This isn't a bigger deal than, say, sieve's age private key, but
-it's in that same category, not the category of "another app's admin
-password."
+why. This isn't a bigger deal than, say, sieve's Cloudflare DNS API
+token, but it's in that same category, not the category of "another
+app's admin password."
 
 **Preparing percolator/cellar/mochaPot for Komodo management**, once
 those nodes physically exist: copy
@@ -372,13 +375,19 @@ agent per node.
   when that backlog item gets picked up — don't treat this one as lower
   priority just because it was found later.
 - `scrutiny`'s `cap_add: SYS_ADMIN` (needed for NVMe smartctl access) is
-  left in place even though it's not confirmed silo actually has an NVMe
-  drive — narrow to just `SYS_RAWIO` if it turns out silo is SATA/SAS
-  only, once that's checked.
-- `diun`'s `tecnativa/docker-socket-proxy` pin (`0.4.2`) came from a
-  GitHub releases page after Docker Hub's own tag listing returned
-  inconsistent-looking results — re-verify before treating this as a
-  long-term pin, same honesty as `unbound`'s digest note.
+  left in place even though silo's `lsblk` output (2026-09-02) confirms
+  its one disk (`/dev/sda`) is a SATA HDD, not NVMe — so this capability
+  is currently unused. Left in rather than narrowed to just `SYS_RAWIO`,
+  in case an NVMe drive is ever added to this node later; revisit if that
+  changes.
+- `diun`'s `tecnativa/docker-socket-proxy` pin **was wrong on first
+  bring-up** (2026-09-02): `0.4.2` doesn't exist on Docker Hub, the real
+  tag needed a `v` prefix (`v0.4.2`). Fixed and moved to `v0.5.0` (current
+  stable), this time verified against Docker Hub's registry API directly
+  rather than a summarized page fetch — see the runbook's 2026-09-02
+  entry for the full story. Worth remembering as a category, not just
+  this one pin: a page-fetch summary can silently drop a detail like a
+  tag prefix that a real `docker compose up` won't forgive.
 - `diun` has no notification channel configured — deliberately deferred,
   see its own section above. It's watching and logging, just not alerting
   anywhere yet.
@@ -387,7 +396,6 @@ agent per node.
   the Komodo UI) — not tightened, since Periphery's docker.sock access
   already grants equivalent capability regardless of this flag; disabling
   it would reduce UI convenience without reducing actual risk.
-- `komodo`'s MongoDB AVX requirement is flagged prominently in the
-  compose file and README, but hasn't been checked against silo's actual
-  CPU from this session (no execution access) — this is the single
-  most likely reason first bring-up fails outright if skipped.
+- ~~`komodo`'s MongoDB AVX requirement~~ — checked 2026-09-02, confirmed
+  present on silo. No longer a gap; kept as a documented preflight step
+  for any future node running its own Periphery.

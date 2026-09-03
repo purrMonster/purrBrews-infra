@@ -10,7 +10,7 @@
 # The .template files are the source of truth and are tracked in git; the
 # rendered output is gitignored since it contains the real domain and/or
 # real secrets. Re-run any time .env.local or a secrets.env.local changes
-# (including right after ./decrypt-secrets.sh) — always safe, always
+# (including right after ./generate-secrets.sh) — always safe, always
 # overwrites the rendered file. Never hand-edit a rendered file directly;
 # edit the .template.
 #

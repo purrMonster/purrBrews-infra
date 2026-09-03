@@ -2,13 +2,13 @@
 #
 # setup-secrets.sh — master first-time-setup script, added 2026-08-31 after
 # Homepage failed its host-validation check for a bug that traced back to
-# this exact gap: `.env.local` (SILO_LAN_IP/TZ/DOMAIN/SIEVE_LAN_IP) had no
-# automated fill-in on mochaPot the way sieve's generate-secrets.sh handles its
-# own `.env.local`'s DOMAIN — mochaPot's README just said "fill in by hand,"
-# and it's an easy step to skip past without noticing, especially coming
-# from sieve's more automated flow. This script closes that gap and chains
-# the rest of first-time setup after it, so there's one command instead of
-# a sequence to remember and get half-right.
+# this exact gap: `.env.local` had no automated fill-in on mochaPot the way
+# sieve's generate-secrets.sh handles its own `.env.local`'s DOMAIN — mochaPot's
+# README just said "fill in by hand," and it's an easy step to skip past
+# without noticing, especially coming from sieve's more automated flow.
+# This script closes that gap and chains the rest of first-time setup after
+# it, so there's one command instead of a sequence to remember and get
+# half-right.
 #
 # Does, in order:
 #   1. Creates .env.local from local.env.example if it doesn't exist yet.
@@ -20,17 +20,20 @@
 #      — extended 2026-08-31 to SIEVE_LAN_IP too: a cross-node fact like
 #      that belongs confirmed at setup time, not silently trusted from
 #      whatever local.env.example happened to say).
-#   3. Runs ./decrypt-secrets.sh — the SOPS+age half, decrypting
-#      secrets/mochaPot/*.sops.yaml into each app's secrets.env.local.
+#   3. Runs ./generate-secrets.sh — generates every secret mochaPot's apps
+#      need, locally, right here on mochaPot, straight into each app's own
+#      secrets.env.local. (Updated 2026-09-02: this step used to be
+#      ./decrypt-secrets.sh, decrypting SOPS+age ciphertext generated on
+#      roastery — replaced when the project dropped SOPS+age fleet-wide
+#      for local generation instead, same pattern sieve always used. See
+#      that day's runbook entry for why.)
 #   4. Checks the results of step 3 for any lingering REPLACE_ME and warns
-#      if found — but does NOT try to fix those itself. A secret's
-#      REPLACE_ME comes from generate-secrets.ps1 on roastery leaving a
-#      prompt blank there; secrets.env.local is regenerated from
-#      secrets/mochaPot/*.sops.yaml on every decrypt, so patching it locally
-#      would just be silently undone by the next `git pull` +
-#      decrypt-secrets.sh. The real fix has to happen at the source
-#      (roastery, generate-secrets.ps1, then commit/push/pull again) — see
-#      secrets/README.md.
+#      if found. That only happens for a value generate-secrets.sh can't
+#      make up on its own (an external API token, say) — none of mochaPot's
+#      current apps need one, but a future app might. Unlike the old
+#      SOPS-era flow, the fix is entirely local now: just re-run
+#      ./generate-secrets.sh once you have the value (it'll prompt again),
+#      no roastery round-trip needed.
 #   5. Runs ./render-configs.sh so every template picks up whatever changed
 #      in steps 1-4 — added so this is genuinely one command for first-time
 #      setup, not three you still have to remember to run in order.
@@ -98,10 +101,10 @@ if [[ -n "$still_replace_me" ]]; then
   echo "  still has a REPLACE_ME value — re-run this script once you have it, or edit .env.local directly"
 fi
 
-log "Decrypting secrets (./decrypt-secrets.sh)"
-"${DIR}/decrypt-secrets.sh"
+log "Generating secrets (./generate-secrets.sh)"
+"${DIR}/generate-secrets.sh"
 
-log "Checking decrypted secrets for lingering REPLACE_ME values"
+log "Checking generated secrets for lingering REPLACE_ME values"
 found_placeholder=0
 shopt -s nullglob
 for f in "${DIR}"/*/secrets.env.local; do
@@ -109,10 +112,8 @@ for f in "${DIR}"/*/secrets.env.local; do
     found_placeholder=1
     app="$(basename "$(dirname "$f")")"
     echo "  WARNING: ${app}/secrets.env.local still has a REPLACE_ME value."
-    echo "           Fix it at the source, not here: on roastery, fill in the matching"
-    echo "           Set-SopsSecretIfAbsent prompt in generate-secrets.ps1, commit, push —"
-    echo "           then git pull and re-run this script. Editing the local file directly"
-    echo "           gets silently overwritten on the next decrypt."
+    echo "           Re-run ./generate-secrets.sh once you have it (it'll prompt again) —"
+    echo "           entirely local now, no roastery round-trip needed."
   fi
 done
 shopt -u nullglob

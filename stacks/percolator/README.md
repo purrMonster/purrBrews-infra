@@ -6,8 +6,8 @@ stack for remaining containers of silo... so that we are prepared for
 percolator, cellar and mochaPot and at last ristretto"). **No apps are
 built here yet.** What's in this directory is only the generic tooling
 every node in this fleet uses (`compose.sh`, `render-configs.sh`,
-`setup-secrets.sh`, `decrypt-secrets.sh`, `generate-secrets.ps1`) copied
-and adapted from stacks/silo/, plus this stub.
+`setup-secrets.sh`, `generate-secrets.sh`) copied and adapted from
+stacks/silo/, plus this stub.
 
 Deploy order, as best understood right now: sieve → silo → percolator (this
 one) → ... — the exact position of percolator relative to the other
@@ -23,7 +23,7 @@ built: research the image/tags, check auth/login default state as a first
 step (see silo's runbook entry on why this is a standing discipline now,
 not an afterthought), check current ports in use on this host before
 publishing a new one, write the docker-compose.yml, add any secrets to
-generate-secrets.ps1, and document it here under a `## Bringing each app
+generate-secrets.sh, and document it here under a `## Bringing each app
 up` section with the same structure silo's README uses.
 
 ## What's here now
@@ -35,17 +35,16 @@ up` section with the same structure silo's README uses.
   counterparts. Copied verbatim from silo.
 - `setup-secrets.sh` — first-time-setup script: creates `.env.local` from
   `local.env.example`, prompts for any `REPLACE_ME`, runs
-  `decrypt-secrets.sh` then `render-configs.sh`. Copied from silo, with
+  `generate-secrets.sh` then `render-configs.sh`. Copied from silo, with
   its silo-specific prose adjusted to percolator.
-- `decrypt-secrets.sh` — the node-side half of the SOPS+age bridge.
-  Decrypts `secrets/percolator/*.sops.yaml` into each app's
-  `secrets.env.local`. Needs the age private key at
-  `/etc/purrbrews/age/keys.txt` on percolator itself (see
-  secrets/README.md) — copied from silo's version, `SECRETS_SRC`
-  repointed at `secrets/percolator`.
-- `generate-secrets.ps1` — the roastery-side half. Run this on roastery to
-  add percolator's secrets to `secrets/percolator/*.sops.yaml` as apps get
-  built. Currently has no per-app entries — nothing to generate yet.
+- `generate-secrets.sh` — generates percolator's own secrets, locally, right
+  here on percolator, straight into each app's `secrets.env.local` — no
+  encryption, no key, nothing committed to git. (Changed 2026-09-02:
+  percolator originally had a two-half SOPS+age bridge here instead —
+  `decrypt-secrets.sh` plus a roastery-side `generate-secrets.ps1` —
+  dropped fleet-wide for this simpler local-only approach; see that day's
+  runbook entry.) Currently has no per-app entries — nothing to generate
+  yet.
 - `local.env.example` — copy to `.env.local` and fill in. Minimal for now
   (`PERCOLATOR_LAN_IP`, `TZ`, `DOMAIN`) — grows as apps are added, same
   as silo's did.

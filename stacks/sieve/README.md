@@ -61,7 +61,11 @@ host, no shared port space with this table).
 
 Not SOPS/age — plain, gitignored, generated locally on the node:
 `generate-secrets.sh` fills in every secret it *can* generate (random
-passwords/keys) directly into each app's `secrets.env.local`. Two values it
+passwords/keys) directly into each app's `secrets.env.local`. (This was
+sieve's own decision at the time, made before silo existed — silo
+initially went a different way, SOPS+age, then dropped it 2026-09-02 in
+favor of this exact pattern fleet-wide; see the runbook entries for both
+dates. Every node uses sieve's original approach now.) Two values it
 can't generate — because they only exist inside your Cloudflare account —
 get a `REPLACE_ME` placeholder you fill in by hand. Nothing here ever gets
 committed; `.gitignore` in this directory covers all of it.

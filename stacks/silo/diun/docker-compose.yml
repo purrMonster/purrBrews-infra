@@ -40,14 +40,25 @@ services:
     restart: unless-stopped
 
   diun-docker-socket-proxy:
-    # Pinned to the latest tagged GitHub release found (2026-09-01) — a
-    # Docker Hub tag listing for this image returned inconsistent-looking
-    # results (mixed in what looked like PR-build tags), so this was
-    # cross-checked against the project's own GitHub releases page
-    # instead and trusted over the messier registry listing. Re-verify
-    # against github.com/Tecnativa/docker-socket-proxy/releases before
-    # relying on this long-term.
-    image: tecnativa/docker-socket-proxy:0.4.2
+    # FIXED 2026-09-02: bring-up failed with "failed to resolve reference
+    # docker.io/tecnativa/docker-socket-proxy:0.4.2: not found" — the tag
+    # was missing its "v" prefix. This project's own tags are
+    # inconsistent about that (0.3/0.3.0 have no "v", every 0.4.x+ tag
+    # does: v0.4.0, v0.4.1, v0.4.2, v0.5.0) — that inconsistency is
+    # exactly what the original 2026-09-01 comment here called "mixed in
+    # what looked like PR-build tags" and misread, dropping the "v" by
+    # mistake instead of recognizing it as part of the real tag. This
+    # time verified directly against Docker Hub's own registry API
+    # (hub.docker.com/v2/repositories/tecnativa/docker-socket-proxy/tags/<tag>)
+    # rather than a summarized page fetch: v0.4.2 returns a real
+    # manifest (amd64 included), bare "0.4.2" 404s. Also moved onto
+    # v0.5.0 while fixing this — it's the actual current stable as of
+    # this fix (pushed 2026-07-27, also carries the "latest" tag) and its
+    # own release notes are additive only (BIND_CONFIG override,
+    # pause/resume support, an HAProxy bump) — CONTAINERS/IMAGES/POST
+    # below are unchanged, confirmed against the project's own current
+    # README before assuming that held.
+    image: tecnativa/docker-socket-proxy:v0.5.0
     container_name: diun-docker-socket-proxy
     environment:
       # Least-privilege API surface — Diun only ever needs to list/inspect

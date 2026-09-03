@@ -59,8 +59,8 @@ services:
       # 26.8.5 tag pinned above, but the underlying lesson — don't run this
       # one open — still applies given it's reachable by anything on the
       # LAN, same reasoning that keeps Pi-hole's admin UI gated). Value
-      # comes from secrets.env.local (see ../generate-secrets.ps1 /
-      # ../decrypt-secrets.sh) — a randomly generated password, NOT
+      # comes from secrets.env.local (see ../generate-secrets.sh) — a
+      # randomly generated password, NOT
       # prompted, same category as sieve's PIHOLE_WEBPASSWORD. NetAlertX's
       # own docs describe this as a plaintext value the app hashes
       # internally (SHA256) — not independently verified against the

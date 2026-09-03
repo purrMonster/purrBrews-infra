@@ -18,7 +18,7 @@ services:
       APP_URL: http://${SILO_LAN_IP}:8080
       DB_CONNECTION: sqlite
       # Laravel encryption key — REQUIRED, no default, app won't run
-      # correctly without one. Generated in generate-secrets.ps1 as
+      # correctly without one. Generated in generate-secrets.sh as
       # "base64:<32 random bytes>", the exact format Laravel expects.
       APP_KEY: ${SPEEDTEST_TRACKER_APP_KEY}
       # Overrides the LinuxServer image's fixed default admin account
