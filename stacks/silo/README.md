@@ -228,13 +228,26 @@ before assuming it's just slow.
 
 ### scrutiny
 
-**Device path already filled in** (2026-09-02, from silo's own `lsblk -d
--o NAME,TYPE,SIZE,MODEL`): silo has one physical disk, `/dev/sda` (931.5G,
-Seagate BarraCuda `ST1000LM035-1RK172`), already set in
-`scrutiny/docker-compose.yml`'s `devices:` list. If a disk is ever
-added/removed/replaced on silo, that list needs a matching manual edit —
-`setup-secrets.sh` never touches a `docker-compose.yml` directly, only
-`.env.local`, so this doesn't auto-update:
+**Device path comes from `.env.local`'s `SCRUTINY_DISK_DEVICE`** (changed
+2026-09-03 — was hardcoded directly in `scrutiny/docker-compose.yml`'s
+`devices:` list; moved to an env var since docker compose's own native
+`${VAR}` interpolation from whatever `--env-file` is passed works fine
+here, same mechanism `${SILO_LAN_IP}` etc. already use elsewhere —
+`render-configs.sh`'s envsubst was never actually required for this,
+that only applies to files under `config/`). Confirmed 2026-09-02 via
+silo's own `lsblk -d -o NAME,TYPE,SIZE,MODEL`: silo has one physical
+disk, `/dev/sda` (931.5G, Seagate BarraCuda `ST1000LM035-1RK172`). If
+`.env.local` predates this change, add the line by hand — re-running
+`setup-secrets.sh` won't retroactively add a new key to an
+already-existing `.env.local`, same gap hit with `SILO_LAN_INTERFACE`/
+`SILO_LAN_SUBNET` earlier:
+
+```sh
+echo 'SCRUTINY_DISK_DEVICE=/dev/sda' | sudo tee -a .env.local
+```
+
+If a disk is ever added/removed/replaced on silo, update `.env.local`,
+not `docker-compose.yml` — re-check with:
 
 ```sh
 lsblk -d -o NAME,TYPE,SIZE,MODEL   # or: smartctl --scan

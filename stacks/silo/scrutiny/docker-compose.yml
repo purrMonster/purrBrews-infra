@@ -31,17 +31,22 @@ services:
       - /srv/data/scrutiny/influxdb:/opt/scrutiny/influxdb
       - /run/udev:/run/udev:ro
     devices:
-      # Filled in 2026-09-02 from silo's own `lsblk -d -o NAME,TYPE,SIZE,MODEL`
-      # output: a single physical disk, sda, 931.5G, Seagate BarraCuda
-      # ST1000LM035-1RK172 (a 2.5" spinning HDD, not NVMe -- SYS_ADMIN
-      # above stays harmless-but-unused for this specific disk, left in
-      # per its own comment rather than narrowed, in case a second/NVMe
-      # disk is ever added to this node later). This file isn't run
-      # through render-configs.sh's envsubst (only files under config/
-      # are), so this had to be a manual edit rather than a REPLACE_ME
-      # in .env.local -- if silo's disks ever change, this line needs a
-      # matching manual update, `lsblk` again to re-check.
-      - /dev/sda
+      # Changed 2026-09-03: was hardcoded here (`- /dev/sda`) since this
+      # file isn't run through render-configs.sh's envsubst (only files
+      # under config/ are) -- but docker compose has its own separate,
+      # native ${VAR} interpolation straight from whatever --env-file is
+      # passed to it, which compose.sh already passes (.env.local), same
+      # mechanism netalertx/speedtest-tracker already rely on for
+      # ${SILO_LAN_IP} etc. No envsubst/render-configs.sh step needed --
+      # docker compose itself resolves this at `up` time. Real value
+      # (confirmed 2026-09-02 via silo's own `lsblk -d -o
+      # NAME,TYPE,SIZE,MODEL`: single physical disk, sda, 931.5G, Seagate
+      # BarraCuda ST1000LM035-1RK172, a 2.5" spinning HDD not NVMe --
+      # SYS_ADMIN above stays harmless-but-unused for this disk, left in
+      # per its own comment in case a second/NVMe disk is added later)
+      # now lives in .env.local as SCRUTINY_DISK_DEVICE, not here -- if
+      # silo's disks ever change, update .env.local, not this file.
+      - ${SCRUTINY_DISK_DEVICE}
     restart: unless-stopped
     # No login/auth exists in this app at all — not a documented "put it
     # behind your own auth" design choice, just genuinely absent (no
