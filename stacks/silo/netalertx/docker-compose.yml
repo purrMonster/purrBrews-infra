@@ -27,12 +27,18 @@ services:
       - CHOWN         # data dir ownership fixups at startup
       - SETUID
       - SETGID
-    # Improves ARP scan accuracy per the same reference compose file —
-    # not required for netalertx to run, but documented as part of the
-    # maintainers' own recommended baseline, not something invented here.
-    sysctls:
-      net.ipv4.conf.all.arp_ignore: 1
-      net.ipv4.conf.all.arp_announce: 2
+    # NOTE (added 2026-09-03): the reference compose file's sysctls block
+    # (net.ipv4.conf.all.arp_ignore/arp_announce, for ARP scan accuracy)
+    # is deliberately NOT here. Docker/runc refuses to apply network-
+    # namespace sysctls through `sysctls:` when network_mode: host is set
+    # — there's no separate namespace to apply them to, only the host's
+    # real live one, and Docker won't mutate that via this mechanism
+    # ("sysctl ... not allowed in host network namespace", confirmed by
+    # actually hitting this on first bring-up, not found in docs first).
+    # Not required for netalertx to run either way (same as it was
+    # documented originally). If you want the ARP accuracy improvement,
+    # set it on the host itself instead — see README's "Known gaps"
+    # section for the exact commands.
     environment:
       PORT: "20211"
       GRAPHQL_PORT: "20212"

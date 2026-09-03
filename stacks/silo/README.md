@@ -365,6 +365,25 @@ agent per node.
   rule by default — see its own section above for why (unconfirmed
   whether the browser needs direct access to it, and this app's CVE
   history made "open it just in case" the wrong default this time).
+- `netalertx`'s compose file does **not** set
+  `net.ipv4.conf.all.arp_ignore`/`arp_announce` (NetAlertX's own reference
+  compose file recommends both, for ARP scan accuracy) — found on first
+  real bring-up 2026-09-03 that Docker/runc refuses `sysctls:` entries
+  entirely under `network_mode: host` ("sysctl ... not allowed in host
+  network namespace"), since there's no separate namespace to apply them
+  to, only the host's real one. Not required for netalertx to run. If you
+  want the accuracy improvement, set it on silo itself instead:
+  ```
+  sudo tee /etc/sysctl.d/99-netalertx-arp.conf <<'EOF'
+  net.ipv4.conf.all.arp_ignore=1
+  net.ipv4.conf.all.arp_announce=2
+  EOF
+  sudo sysctl --system
+  ```
+  This is host-wide (affects all interfaces on silo, not just netalertx's
+  container), which is why it's left as an opt-in step here rather than
+  baked into setup — both values are common general-purpose hardening for
+  a multi-homed host regardless of netalertx.
 - `speedtest-tracker` runs with the LinuxServer image's own default
   `PUID`/`PGID` — same accepted gap, same reasoning, as `netalertx`'s
   above.
