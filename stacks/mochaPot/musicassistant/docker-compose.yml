@@ -1,0 +1,15 @@
+services:
+  musicassistant:
+    image: ghcr.io/music-assistant/server:2.9.8
+    container_name: musicassistant
+    # Confirmed 2026-09-03 via Music Assistant's own docs: required for
+    # mDNS/UPnP player discovery and direct-network streaming to
+    # Chromecast/AirPlay/Sonos/DLNA -- same underlying reason as Home
+    # Assistant's network_mode: host on percolator. All target devices
+    # must share a flat network (no VLANs) for this to work.
+    network_mode: host
+    volumes:
+      - /srv/data/musicassistant:/data
+    environment:
+      TZ: ${TZ}
+    restart: unless-stopped

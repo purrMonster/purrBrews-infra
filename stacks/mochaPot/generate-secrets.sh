@@ -12,12 +12,11 @@
 # re-explained here to avoid drifting out of sync across five copies of
 # the same header.
 #
-# THIS FILE HAS NO APPS YET. mochaPot's own app list isn't built out — see
-# stacks/mochaPot/README.md and the initiation doc for what's actually
-# planned. Add one set_if_absent (or prompt_if_placeholder) call per
-# secret as each app gets built, same pattern as
-# stacks/silo/generate-secrets.sh's own per-app section — copy the helper
-# functions below as-is, they're generic.
+# Wired 2026-09-03 for all 10 of mochaPot's apps (jellyfin, musicassistant,
+# immich, vikunja, n8n, freshrss, mealie, actualbudget, stirlingpdf,
+# roundcube) plus the deliberately-deferred traefik/. Most have no
+# secrets of their own (first-run web UI setup, confirmed per-app) --
+# see the "Per-app secrets go here" section below for exactly which do.
 #
 # Usage: run directly on mochaPot itself (never on roastery — per Section
 # 19.6, "no live coding on fleet nodes" is about not editing code/configs
@@ -91,19 +90,32 @@ prompt_if_placeholder() {
 }
 
 # --- Per-app secrets go here ------------------------------------------
-# One set_if_absent call per secret value, added as each app gets built —
-# see stacks/silo/generate-secrets.sh's own per-app section for real
-# worked examples (netalertx/speedtest-tracker/komodo). Nothing here yet:
-# mochaPot has no apps built out as of 2026-09-02.
-#
-#   set_if_absent "${DIR}/somesvc/secrets.env.local" "SOME_PASSWORD" "$(rand 16)"
-#
-# For a value that can't be randomly generated (an API token, etc.), use
-# prompt_if_placeholder instead:
-#
-#   prompt_if_placeholder "${DIR}/somesvc/secrets.env.local" "SOME_API_TOKEN" \
-#     "Some service API token" "REPLACE_ME_some_api_token" --secret
-# ------------------------------------------------------------------------
+
+log "vikunja/secrets.env.local"
+set_if_absent "${DIR}/vikunja/secrets.env.local" "VIKUNJA_SERVICE_SECRET" "$(rand 32)"
+
+log "n8n/secrets.env.local"
+# Pinned, not left to auto-generate -- see n8n/docker-compose.yml's own
+# comment: losing this key makes every stored credential unreadable.
+set_if_absent "${DIR}/n8n/secrets.env.local" "N8N_ENCRYPTION_KEY" "$(rand 32)"
+
+log "roundcube/secrets.env.local"
+# Real external mail provider values -- can't be randomly generated,
+# prompted instead. This fleet has no mail server of its own; Roundcube
+# is purely a webmail client (confirmed 2026-09-03).
+prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_IMAP_HOST" \
+  "IMAP server (e.g. imap.gmail.com:993)" "REPLACE_ME_imap_host"
+prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_SMTP_HOST" \
+  "SMTP server (e.g. smtp.gmail.com:587)" "REPLACE_ME_smtp_host"
+
+# jellyfin/, musicassistant/, immich/, freshrss/, mealie/, actualbudget/,
+# stirlingpdf/ have no secrets.env.local of their own -- either no auth
+# config exists at the compose level (first-run wizards/UI-set
+# passwords, confirmed per-app 2026-09-03), or (immich/) the real
+# secrets already live in postgres/secrets.env.local on PERCOLATOR, not
+# duplicated here. mochaPot's own traefik/ has none either, deliberately
+# deferred -- see its own docker-compose.yml comment.
+# --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true
 
@@ -118,7 +130,7 @@ for f in "${DIR}"/*/secrets.env.local; do
 done
 
 if [[ ${#still_needed[@]} -eq 0 ]]; then
-  echo "Done — nothing to generate yet (mochaPot has no apps with secrets)."
+  echo "Done — nothing still needs a real value."
 else
   echo "Done, but these still need a real value — re-run this script anytime"
   echo "you have them (or edit the file directly):"

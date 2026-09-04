@@ -1,0 +1,20 @@
+services:
+  freshrss:
+    image: freshrss/freshrss:latest
+    container_name: freshrss
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /srv/data/freshrss/data:/var/www/FreshRSS/data
+      - /srv/data/freshrss/extensions:/var/www/FreshRSS/extensions
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+    # No default credentials -- web-based setup wizard on first load,
+    # confirmed 2026-09-03. Port 8090, NOT FreshRSS's usual 8095-ish
+    # convention -- Music Assistant's network_mode: host on this same
+    # node binds 8095/8097 directly on mochaPot's real host port space,
+    # so any bridge-networked app publishing 8095 here would collide with
+    # it. Double-check with `ss -tlnp` on mochaPot before first bring-up
+    # regardless -- this port table hasn't been cross-checked against a
+    # real host yet, same standing discipline as every other node.

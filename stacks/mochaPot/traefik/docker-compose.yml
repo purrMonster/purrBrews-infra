@@ -1,0 +1,32 @@
+services:
+  traefik:
+    image: traefik:v3.7.12
+    container_name: traefik
+    command:
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--api.dashboard=false"
+      # No providers.docker here, deliberately -- unlike percolator,
+      # mochaPot's apps don't share a Docker network with each other (no
+      # postgres/valkey binding them together the way percolator's data
+      # layer does), and most already publish their own host port. Routes
+      # to each app via the file provider + localhost:<published-port>
+      # instead of Docker service discovery -- simpler given the actual
+      # topology here, not a downgrade from percolator's approach, a
+      # different one that fits this node's actual app shape.
+    ports:
+      - "80:80"
+    volumes:
+      - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+    restart: unless-stopped
+    # Deliberately last, per initiation.txt Section 18.6 ("Own Traefik
+    # instance -- last, once the apps above are healthy") -- not brought
+    # up as part of this build pass. Bring up every other mochaPot app
+    # first, confirm each is healthy on its own published port, THEN this
+    # one, THEN write config/dynamic.yml's actual routers pointing at
+    # each app's localhost:<port> plus the same sieve-Authelia ForwardAuth
+    # middleware percolator's traefik/ uses (see that file for the exact
+    # pattern) -- not written yet, deliberately, since nothing here should
+    # be routed through it until the direct-port version is confirmed
+    # working first.

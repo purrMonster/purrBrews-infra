@@ -1,0 +1,28 @@
+services:
+  vikunja:
+    image: vikunja/vikunja:2.6.0
+    container_name: vikunja
+    environment:
+      TZ: ${TZ}
+      # Deliberate deviation from Vikunja's own official reference compose
+      # (which defaults to Postgres) -- confirmed 2026-09-03 SQLite is
+      # supported (VIKUNJA_DATABASE_TYPE=sqlite), and initiation.txt
+      # Section 18.6 explicitly decided mochaPot's remaining apps
+      # (Vikunja/n8n/FreshRSS/Mealie/Actual Budget/Roundcube) stay on
+      # default SQLite rather than getting dedicated Postgres each --
+      # "at two-user scale, SQLite is what these apps' own maintainers
+      # recommend, and isolating each one would burn RAM for no real
+      # benefit." No Postgres exists on mochaPot at all; this is a real
+      # architectural choice, not an oversight.
+      VIKUNJA_DATABASE_TYPE: sqlite
+      VIKUNJA_DATABASE_PATH: /db/vikunja.db
+      VIKUNJA_SERVICE_PUBLICURL: http://${MOCHAPOT_LAN_IP}:3456
+      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SERVICE_SECRET}
+    volumes:
+      - /srv/data/vikunja/db:/db
+      - /srv/data/vikunja/files:/app/vikunja/files
+    ports:
+      - "3456:3456"
+    restart: unless-stopped
+    # No default admin -- first run creates DB/migrations, then register
+    # an account via the UI, confirmed 2026-09-03.

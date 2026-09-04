@@ -1,0 +1,17 @@
+services:
+  mealie:
+    image: ghcr.io/mealie-recipes/mealie:v3.25.0
+    container_name: mealie
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /srv/data/mealie:/app/data/
+    ports:
+      - "9925:9000"
+    restart: unless-stopped
+    # No setup wizard -- confirmed 2026-09-03 this image ships an actual
+    # default account, changeme@example.com / MyPassword, no env-var
+    # override for it. Log in with that, change the password immediately.
+    # Also confirmed: SQLite (this image's default) explicitly should NOT
+    # sit on network/NAS storage (documented corruption risk) -- fine
+    # here, /srv/data is local NVMe, not cellar's NFS.

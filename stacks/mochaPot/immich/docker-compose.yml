@@ -1,0 +1,49 @@
+services:
+  immich-server:
+    # Current stable per Immich's GitHub releases, confirmed 2026-09-03.
+    image: ghcr.io/immich-app/immich-server:v3.0.2
+    container_name: immich-server
+    environment:
+      TZ: ${TZ}
+      # Cross-host, not container-DNS -- Immich's DB (postgres-immich,
+      # VectorChord) and Redis-role service (valkey) both live on
+      # percolator, a different physical host. Confirmed 2026-09-03 via
+      # Immich's own "pre-existing postgres" docs that the discrete
+      # DB_HOSTNAME/etc vars (or a single DB_URL, either works) are how
+      # you point Immich at a database it doesn't manage itself.
+      DB_HOSTNAME: ${PERCOLATOR_LAN_IP}
+      DB_PORT: "5432"
+      DB_USERNAME: ${IMMICH_DB_USERNAME}
+      DB_PASSWORD: ${IMMICH_DB_PASSWORD}
+      DB_DATABASE_NAME: ${IMMICH_DB_DATABASE_NAME}
+      REDIS_HOSTNAME: ${PERCOLATOR_LAN_IP}
+      REDIS_PORT: "6379"
+      # DB 0 -- the shared valkey instance's own default, matches what
+      # percolator/valkey/docker-compose.yml reserved for Immich.
+      REDIS_DBINDEX: "0"
+      # Confirmed 2026-09-03: this env var works but is officially
+      # deprecated -- a maintainer states in GitHub Discussion #20686 that
+      # ML worker config should go through Admin Settings -> Machine
+      # Learning Settings -> URL in the web GUI instead. Set here anyway
+      # as a working default so ML isn't silently unconfigured on first
+      # boot; the GUI is the documented path going forward if this env
+      # var is ever removed in a future Immich release.
+      IMMICH_MACHINE_LEARNING_URL: http://${ROASTERY_TAILNET_IP}:3003
+    volumes:
+      # Local NVMe -- Immich's own docs are explicit that UPLOAD_LOCATION
+      # can be NFS but strongly implies fast local storage is preferable
+      # for the active library; cellar's NFS archive share (once it
+      # exists) is a better fit for cold/older originals via a future
+      # storage-migration job, not the primary upload location from day
+      # one.
+      - /srv/data/immich:/data
+    ports:
+      - "2283:2283"
+    restart: unless-stopped
+    # Known gap, not resolved here (2026-09-03): ROASTERY_TAILNET_IP isn't
+    # in local.env.example yet -- roastery's ML worker isn't built/running
+    # yet either (per initiation.txt, it's Ollama + GPU-accelerated Immich
+    # ML worker, reachable only via the Headscale tailnet, no public
+    # exposure). Fill in once that's actually stood up on roastery; Immich
+    # runs fine without it, just does inference in software/CPU fallback
+    # (or not at all) until then.

@@ -1,0 +1,10 @@
+# Placeholder -- intentionally empty of real routers. Confirmed 2026-09-03:
+# this exists only so the bind mount in ../docker-compose.yml has a real
+# file to mount (a missing source path gets created as a directory by
+# Docker, which would break Traefik's file provider) -- NOT because
+# routing is configured yet. Per initiation.txt Section 18.6, mochaPot's
+# Traefik comes up last, after every other app here is confirmed healthy
+# on its own published port. Add real `http.routers`/`http.middlewares`
+# entries (same ForwardAuth-to-sieve's-Authelia pattern as
+# stacks/percolator/traefik/config/dynamic.yml.template) once that's
+# actually happening, not before.

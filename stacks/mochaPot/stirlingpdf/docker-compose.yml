@@ -1,0 +1,27 @@
+services:
+  stirlingpdf:
+    image: stirlingtools/stirling-pdf:latest
+    container_name: stirlingpdf
+    environment:
+      TZ: ${TZ}
+      # Confirmed 2026-09-03: login is ON by default in the mainline
+      # image (SECURITY_ENABLELOGIN defaults true), with a well-known
+      # default admin/stirling created on first launch -- explicitly set
+      # here (not just relying on the image default) so it's visible in
+      # this file that auth is intentionally on, not an accident. Change
+      # the password on first login.
+      SECURITY_ENABLELOGIN: "true"
+    volumes:
+      - /srv/data/stirlingpdf/configs:/configs
+      - /srv/data/stirlingpdf/logs:/logs
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    # CVE history worth knowing, confirmed 2026-09-03: several SSRF/XSS
+    # CVEs disclosed against this project (CVE-2025-55150, CVE-2024-55082,
+    # CVE-2024-52286, CVE-2025-46568, CVE-2026-33436). Given it processes
+    # untrusted PDFs, stay current on the tag -- :latest here is a
+    # deliberate deviation from this fleet's usual pin-a-real-version
+    # discipline, specifically because staying current matters more than
+    # pin-stability for a tool with this CVE cadence. Revisit if that
+    # tradeoff ever feels wrong.

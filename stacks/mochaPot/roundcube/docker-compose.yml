@@ -1,0 +1,25 @@
+services:
+  roundcube:
+    image: roundcube/roundcubemail:1.7.3-apache
+    container_name: roundcube
+    environment:
+      TZ: ${TZ}
+      # Confirmed 2026-09-03: Roundcube is purely a webmail CLIENT, no
+      # MTA/mail-storage of its own -- this fleet has no mail server, so
+      # these have to point at a real external provider's IMAP/SMTP
+      # (Gmail, Fastmail, whatever account this is actually for). Real
+      # values, not randomly generatable -- prompted via
+      # prompt_if_placeholder in generate-secrets.sh, not set_if_absent.
+      ROUNDCUBEMAIL_DEFAULT_HOST: ${ROUNDCUBE_IMAP_HOST}
+      ROUNDCUBEMAIL_SMTP_SERVER: ${ROUNDCUBE_SMTP_HOST}
+      ROUNDCUBEMAIL_DB_TYPE: sqlite
+    volumes:
+      - /srv/data/roundcube/db:/var/roundcube/db
+      - /srv/data/roundcube/config:/var/roundcube/config
+    ports:
+      - "8091:80"
+    restart: unless-stopped
+    # No admin account here at all -- confirmed 2026-09-03 login is
+    # per-user against whatever the configured IMAP server accepts, same
+    # as any webmail client. Nothing to set up beyond the two host values
+    # above.

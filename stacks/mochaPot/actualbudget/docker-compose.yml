@@ -1,0 +1,15 @@
+services:
+  actualbudget:
+    image: actualbudget/actual-server:latest
+    container_name: actualbudget
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /srv/data/actualbudget:/data
+    ports:
+      - "5006:5006"
+    restart: unless-stopped
+    # No forced password on first run -- confirmed 2026-09-03 you set a
+    # password/passphrase through the web UI during initial setup, not
+    # via an env var. Nothing to wire into generate-secrets.sh for this
+    # one.
