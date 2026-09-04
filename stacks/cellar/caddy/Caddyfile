@@ -1,0 +1,17 @@
+vault.{$DOMAIN} {
+	tls {
+		# {env.X} here, not {$X} -- confirmed 2026-09-04 against Caddy's own
+		# docs: {$VAR} is Caddyfile-parse-time substitution, valid in site
+		# addresses (used for the domain above) but NOT inside directives;
+		# {env.VAR} is the runtime placeholder directives actually expect.
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# Vaultwarden's own container name on cellar_net -- container DNS,
+	# not a published host port. Confirmed 2026-09-04 via the Vaultwarden
+	# wiki's own Caddy example: forward X-Real-IP so Vaultwarden's logs/
+	# fail2ban-equivalent see the real client IP, not Caddy's.
+	reverse_proxy vaultwarden:80 {
+		header_up X-Real-IP {remote_host}
+	}
+}

@@ -11,7 +11,15 @@ services:
     container_name: vaultwarden
     environment:
       TZ: ${TZ}
-      DOMAIN: http://${CELLAR_LAN_IP}:8000
+      # Updated 2026-09-04 -- was http://${CELLAR_LAN_IP}:8000. Bitwarden
+      # clients (browser extension, mobile, CLI) refuse plain HTTP except
+      # exactly http://localhost -- WebCrypto requires a secure context --
+      # so this always needed real HTTPS, not just gating. Caddy (see
+      # ../caddy/) terminates real TLS via Let's Encrypt/Cloudflare
+      # DNS-01 now. Needs a Local DNS Record for vault.${DOMAIN} in
+      # sieve's Pi-hole pointing at ${CELLAR_LAN_IP} -- same pattern as
+      # silo's *.${DOMAIN} hostnames, not added yet, see README.
+      DOMAIN: https://vault.${DOMAIN}
       # Argon2id PHC hash, not plaintext -- generate-secrets.sh below sets
       # a random PLAINTEXT value as a working bootstrap default (still
       # supported, just discouraged per Vaultwarden's own current docs).
@@ -30,9 +38,18 @@ services:
       SIGNUPS_ALLOWED: "true"
     volumes:
       - /srv/data/vaultwarden:/data
-    ports:
-      - "8000:80"
+    # No ports: mapping as of 2026-09-04 -- was "8000:80" until then.
+    # Caddy is now the only path in, reached by container name on
+    # cellar_net (below, via this project's own "default" network
+    # redirected to it -- see the networks: block at the end of this
+    # file) -- there was never a reason to keep plain-HTTP direct access
+    # anyway, since Bitwarden clients won't use it.
     restart: unless-stopped
     # Confirmed 2026-09-03: embedded SQLite is Vaultwarden's own default
     # and is adequate at household scale -- no external DB needed, no
     # DATABASE_URL set.
+
+networks:
+  default:
+    name: cellar_net
+    external: true

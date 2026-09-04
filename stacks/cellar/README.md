@@ -14,16 +14,27 @@ confirmed ready by User Penguin as of 2026-09-03.
 Human-facing password vault -- unrelated to how this fleet generates ITS
 OWN container secrets (`generate-secrets.sh` everywhere, unchanged).
 
+**Bring `caddy` up first (see its own section below)** -- as of
+2026-09-04, Vaultwarden no longer publishes a port of its own at all; it
+needs `caddy` up and the `cellar_net` network it creates before it's
+reachable by anything, Caddy included.
+
 ```sh
 sudo mkdir -p /srv/data/vaultwarden
 ./compose.sh vaultwarden up -d
 ```
 
-Reachable at `http://<CELLAR_LAN_IP>:8000`. First real account you create
-there is the one to keep -- **then manually set `SIGNUPS_ALLOWED=false`**
-in `docker-compose.yml` and restart. Confirmed 2026-09-03 this doesn't
-happen automatically; leaving it `true` means anyone on the LAN who finds
-this URL can register their own account.
+Reachable at `https://vault.${DOMAIN}` (once sieve's Pi-hole has the
+Local DNS Record, see caddy's own section) -- **not** a bare LAN IP/port
+anymore. Confirmed 2026-09-04 via Vaultwarden's own wiki: real HTTPS was
+never optional here, Bitwarden clients (browser extension, mobile, CLI)
+refuse plain HTTP except exactly `http://localhost` since WebCrypto
+requires a secure context -- this wasn't a security nice-to-have, the
+apps you'd actually use this with won't connect without it. First real
+account you create there is the one to keep -- **then manually set
+`SIGNUPS_ALLOWED=false`** in `docker-compose.yml` and restart. Confirmed
+2026-09-03 this doesn't happen automatically; leaving it `true` means
+anyone who finds this URL can register their own account.
 
 **Admin token upgrade, not done automatically**: `VAULTWARDEN_ADMIN_TOKEN`
 is currently a random plaintext value (works, but Vaultwarden's own
@@ -38,6 +49,53 @@ Paste the resulting `$argon2id$...` string into `ADMIN_TOKEN` in
 `vaultwarden/docker-compose.yml` directly (doubling every `$` to `$$` --
 compose does its own `$` interpolation), remove the `${VAULTWARDEN_ADMIN_TOKEN}`
 reference, restart.
+
+### caddy
+
+Added 2026-09-04, specifically to give Vaultwarden real HTTPS -- see
+vaultwarden's own section above for why this isn't optional. TLS
+termination only, no auth middleware -- deliberately not Traefik/
+Authelia, and deliberately not routing through silo's Traefik either
+(that would mean Vaultwarden traffic crossing to a different physical
+host for no reason). ForwardAuth in front of Vaultwarden breaks native
+Bitwarden clients (they hit `/api`/`/identity` directly, no browser
+session to redirect through an SSO flow), and Vaultwarden already has its
+own real auth (master password + 2FA + admin token) -- there's nothing a
+gate would add here. This is exactly what Vaultwarden's own wiki
+recommends over its built-in `ROCKET_TLS` (documented as "not
+recommended", RSA-only, can't parse the ECDSA certs Certbot defaults to
+since v2.0).
+
+Custom-built image (official Caddy has no Cloudflare DNS plugin baked
+in) -- `docker compose build` handles this automatically as part of
+`up`, nothing separate to run. DNS-01 challenge via Cloudflare, not
+HTTP-01: cellar has no port 80 exposed to the internet (no port
+forward), so HTTP-01 validation isn't possible here regardless -- DNS-01
+needs no inbound access at all, and Caddy renews and reloads
+automatically with no cron job or restart-on-renew needed.
+
+Needs a real Cloudflare credential -- `caddy/secrets.env.local`'s
+`CLOUDFLARE_API_TOKEN`, prompted by `setup-secrets.sh`/`generate-secrets.sh`
+since it can't be randomly generated (same category as mochaPot's
+Roundcube mail hosts). Needs `Zone:DNS:Edit` permission on whatever zone
+`${DOMAIN}` is under -- reuse sieve's own `CF_DNS_API_TOKEN` if it
+already has that scope, or create a new narrowly-scoped one.
+
+```sh
+sudo mkdir -p /srv/data/caddy/data /srv/data/caddy/config
+sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp
+./compose.sh caddy up -d
+docker logs caddy --tail 50   # look for a successful cert issuance, not just a clean startup
+```
+
+**Before this actually works**, add a Local DNS Record in sieve's Pi-hole
+(Settings → Local DNS Records, or `/etc/pihole/custom.list` directly) for
+`vault.${DOMAIN}`, pointing at `${CELLAR_LAN_IP}` -- same pattern as
+silo's `*.${DOMAIN}` hostnames from the same day, not added yet, not part
+of this build. Test with `curl -H "Host: vault.${DOMAIN}"
+https://<CELLAR_LAN_IP>/ -k` (the `-k` is expected until DNS is real --
+Caddy's cert is issued for the real hostname, so hitting it by raw IP
+will always show a cert-mismatch warning, that's not a failure).
 
 ### smb
 
@@ -150,3 +208,22 @@ script itself is identical).
   manage it), see `stacks/_templates/komodo-periphery/docker-compose.yml`
   — copy it into an app subdirectory here once cellar exists and fill in
   its `REPLACE_ME` values.
+- **Vaultwarden has zero fallback access as of 2026-09-04** -- its old
+  `http://<CELLAR_LAN_IP>:8000` is gone, and it's only reachable through
+  `caddy` now. Until `caddy` is up AND sieve's Pi-hole has the
+  `vault.${DOMAIN}` Local DNS Record (see caddy's own section), there is
+  no way to reach it at all -- not a partial gap, a full outage until
+  both exist.
+- **Caddy's own image is built locally, not pulled** (`docker compose
+  build`) -- unlike every other image in this fleet, its freshness isn't
+  pinned or tracked by Diun (Diun watches image tags, not what a local
+  Dockerfile's `xcaddy build` step happened to pull in at build time).
+  Re-run `docker compose build --no-cache caddy` periodically by hand.
+- **SMB's ports (139/445) carry the same Docker-NAT-bypasses-ufw
+  exposure found on silo 2026-09-04** (see silo's README/the runbook for
+  the full finding) -- any `ufw allow`/`deny` rule on these ports is
+  currently a no-op, same as it was for Komodo. Not fixed here: SMB
+  requires its own login (`ACCOUNT_barista`'s password) regardless, so
+  this isn't the same "wide open with zero protection" situation
+  Scrutiny was in on silo, but it's worth knowing the port itself isn't
+  actually LAN-scoped by ufw the way the table might suggest.

@@ -1111,3 +1111,120 @@ ufw-bypass issue is fleet-wide, not silo-specific -- every
 cellar/mochaPot guarding a bridge-published (not host-networked) port is
 confirmed a no-op too, not just theoretically, and none of those are
 fixed yet.
+
+User Penguin confirmed `192.168.0.12:9120` (Komodo) is indeed still
+reachable directly, unauthenticated by Traefik/Authelia — expected, not a
+leftover bug, per the deliberate exception documented above. Discussed
+two possible ways to actually close that later, neither started:
+(a) once percolator/cellar/mochaPot have real Periphery agents deployed,
+scope the port to just those specific node IPs — but this needs the
+`DOCKER-USER` iptables chain fix (or `ufw-docker`) first, since a plain
+`ufw allow from <IP>` on a Docker-published port is exactly the kind of
+rule just confirmed to be a no-op; (b) check whether Komodo Core can
+serve its browser UI and its Periphery websocket protocol on two
+separate ports — if so, only the Periphery one would need to stay
+published, and the UI port could drop to `silo_net`-only like Scrutiny/
+Homepage/Speedtest-tracker. Not confirmed against Komodo's own docs
+either way. Both deferred, not urgent — current state (open port, the
+app's own JWT/webhook/admin secrets as the real boundary) is accepted as
+a documented tradeoff for now.
+
+### Pending, end of this session (2026-09-04)
+
+- **Commit and push tonight's silo changes** (`silo_net`, Komodo/
+  Scrutiny/Homepage/Speedtest-tracker/Traefik rewiring, this runbook
+  entry, `stacks/silo/README.md`) — staged via this session's device
+  bridge, not yet committed as of this entry. From roastery's PowerShell,
+  same as every other commit this session (no git identity in the
+  sandbox shell that did the editing, deliberately never set one).
+- **Blocking, do before redeploying anything on silo**: add 5 Local DNS
+  Records in sieve's Pi-hole (Settings → Local DNS Records) —
+  `komodo`/`scrutiny`/`netalertx`/`homepage`/`speedtest`, all
+  `.${DOMAIN}`, pointing at silo's LAN IP. Homepage/Scrutiny/
+  Speedtest-tracker have zero fallback access (no old port, no working
+  hostname) until this exists and `traefik` is up on silo.
+- **On silo**: `git pull`, then `./compose.sh komodo up -d &&
+  ./compose.sh scrutiny up -d && ./compose.sh homepage up -d &&
+  ./compose.sh speedtest-tracker up -d && ./compose.sh traefik up -d`.
+  Verify with the curl-Host-header trick in the README before trusting
+  DNS, then a real browser login through each `*.${DOMAIN}` hostname to
+  confirm the Authelia redirect actually happens.
+- **Fleet-wide ufw audit, not started**: the Docker-NAT-bypasses-ufw
+  issue confirmed on silo tonight is not silo-specific. Every `sudo ufw
+  allow from 192.168.0.0/24 ...` rule guarding a bridge-published (not
+  host-networked) port on sieve/percolator/cellar/mochaPot is a
+  confirmed no-op too, not just theoretical. Needs the same audit silo
+  just got — which ports are host-networked (fine) vs. bridge-published
+  (currently unprotected) — on every other node.
+- **Komodo's 9120 exception** — see the two options above, neither
+  started, not urgent until percolator/cellar/mochaPot actually deploy
+  Periphery agents.
+- **Still open from earlier tonight, unrelated to the Traefik work**:
+  cellar's SMB hasn't been brought up yet (only Vaultwarden is live);
+  percolator and mochaPot have zero apps brought up at all yet (compose
+  files committed and pushed, `./compose.sh <app> up -d` never run on
+  either node) — the original "push and get them running tonight" goal
+  is still open on both of those nodes.
+- **Still open from before tonight, untouched by any of this**: the
+  Scrutiny hub/spoke conversion on silo (see the earlier researched-but-
+  deferred entry), Diun's notification channel decision, and whether
+  speedtest-tracker's login field is `barista` or an email address (as
+  currently documented) — never independently confirmed.
+
+User Penguin got cellar's SMB share reachable from roastery (Windows'
+own native SMB client, no extra software needed -- Samba just implements
+the same protocol Windows has always spoken) and then flagged a real
+blocker: Vaultwarden requires HTTPS. Confirmed via Vaultwarden's own
+wiki -- not a preference, a hard requirement: Bitwarden clients (browser
+extension, mobile, CLI) refuse plain HTTP except exactly
+`http://localhost`, since the WebCrypto operations they need require a
+secure context. Asked specifically how to do this without Traefik.
+
+Two options researched via Vaultwarden's own wiki: (1) `ROCKET_TLS`
+directly on Vaultwarden itself (Rocket's built-in TLS) -- works, but the
+wiki calls it "not recommended," and it's RSA-only (can't parse ECDSA
+certs, which Certbot has defaulted to since v2.0, confirmed via a second
+search) -- would need `--key-type rsa` forced explicitly on every
+issuance; (2) Caddy as a TLS-terminating reverse proxy, no auth
+middleware -- what the project's own docs steer toward instead, and
+sidesteps the RSA requirement entirely. User Penguin picked Caddy, and
+mentioned cellar already has Cloudflare-managed DNS available (same
+infra sieve's Traefik already uses for its own ACME).
+
+Built `stacks/cellar/caddy/` -- a locally-built image (official Caddy has
+no DNS-provider plugins baked in; `Dockerfile` uses the xcaddy builder
+pattern documented on the Vaultwarden wiki's own "Caddy 2.x with
+Cloudflare DNS" page, pinned to caddy:2.11.4/2.11.4-builder, confirmed
+current via Docker Hub directly rather than assumed) plus a `Caddyfile`
+using DNS-01 (`dns cloudflare {env.CLOUDFLARE_API_TOKEN}` -- confirmed
+directly against Caddy's own docs that `{env.X}` is required inside
+directives while `{$X}` is only valid in the site address itself, a real
+distinction, not interchangeable). DNS-01 rather than HTTP-01
+deliberately -- cellar has no port 80 exposed to the internet, so
+HTTP-01 isn't even possible here, and DNS-01 needs no inbound access at
+all. Caddy renews and reloads automatically, no cron/deploy-hook needed,
+unlike the `ROCKET_TLS`+certbot path that was the other candidate.
+
+Added `cellar_net` (same idempotent-create pattern as `percolator_net`/
+`silo_net`, wired into `compose.sh`). Vaultwarden's `ports:` mapping
+(`8000:80`) is gone entirely -- there was never a reason to keep plain
+HTTP direct access once Caddy exists, since Bitwarden clients won't use
+it anyway -- and its `DOMAIN` env var now points at `https://vault.
+${DOMAIN}`. Caddy reaches it by container name (`vaultwarden:80`) on
+`cellar_net`, publishes only `443:443` to the host. Wired
+`CLOUDFLARE_API_TOKEN` into `generate-secrets.sh` via `prompt_if_placeholder`
+(real external credential, same category as mochaPot's Roundcube mail
+hosts) -- functionally tested in a throwaway copy, confirmed idempotent,
+same discipline as every other node's secrets script this build sprint.
+
+Updated `stacks/cellar/README.md` throughout (new caddy section,
+vaultwarden's section, Known gaps). Flagged plainly: Vaultwarden has zero
+fallback access until both `caddy` is up and sieve's Pi-hole gets a
+`vault.${DOMAIN}` Local DNS Record (not added yet, same open item as
+silo's five hostnames from the same day) -- not a partial gap, a full
+outage until both exist. Also flagged that SMB's published ports
+(139/445) carry the same Docker-NAT-bypasses-ufw exposure confirmed on
+silo earlier tonight, not fixed here (SMB's own login is the actual
+protection regardless, so this isn't a "wide open" situation the way
+Scrutiny's was, but the ufw rule itself still doesn't do what it looks
+like it does).

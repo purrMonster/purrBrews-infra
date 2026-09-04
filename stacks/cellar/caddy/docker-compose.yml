@@ -1,0 +1,46 @@
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cellar-caddy-cloudflare:local
+    container_name: caddy
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /srv/data/caddy/data:/data
+      - /srv/data/caddy/config:/config
+    ports:
+      - "443:443"
+    restart: unless-stopped
+    # Added 2026-09-04 -- Vaultwarden's Bitwarden clients (browser
+    # extension, mobile, CLI) refuse to connect over plain HTTP except
+    # exactly `http://localhost` (WebCrypto requires a secure context),
+    # so this exists specifically to give Vaultwarden real HTTPS.
+    # Deliberately NOT Traefik -- see runbook/README's earlier reasoning:
+    # ForwardAuth in front of Vaultwarden breaks those same native
+    # clients (they hit /api and /identity directly, no browser redirect
+    # to complete an SSO flow), and Vaultwarden already has its own real
+    # auth (master password + 2FA + admin token), so there's nothing
+    # ForwardAuth would add here anyway. This is TLS termination only, no
+    # auth middleware -- exactly what Vaultwarden's own wiki recommends
+    # over its built-in (and RSA-only, ECC-incompatible) ROCKET_TLS.
+    #
+    # DNS-01 challenge via Cloudflare, not HTTP-01 -- deliberate, not just
+    # a preference: cellar has no port 80 exposed to the internet (no port
+    # forward, LAN-only), so HTTP-01 validation isn't even possible here.
+    # DNS-01 needs no inbound access at all. Caddy renews and reloads
+    # automatically -- no certbot-style cron/systemd-timer + deploy-hook
+    # needed, unlike the ROCKET_TLS-direct alternative this replaced in
+    # the original plan.
+    #
+    # Only port 443 is published -- Vaultwarden itself has no ports: of
+    # its own anymore (see its own docker-compose.yml), reached only by
+    # container name on cellar_net. Caddy is genuinely the only path in.
+
+networks:
+  default:
+    name: cellar_net
+    external: true

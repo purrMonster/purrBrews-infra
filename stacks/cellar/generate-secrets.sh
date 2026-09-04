@@ -104,6 +104,18 @@ set_if_absent "${DIR}/vaultwarden/secrets.env.local" "VAULTWARDEN_ADMIN_TOKEN" "
 log "smb/secrets.env.local"
 set_if_absent "${DIR}/smb/secrets.env.local" "SMB_BARISTA_PASSWORD" "$(rand 16)"
 
+log "caddy/secrets.env.local"
+# Real external Cloudflare credential -- can't be randomly generated,
+# prompted instead, same category as mochaPot's Roundcube IMAP/SMTP
+# hosts. Needs Zone:DNS:Edit permission on the zone ${DOMAIN} is under --
+# reuse sieve's own CF_DNS_API_TOKEN if it already has that scope, or
+# create a new narrowly-scoped one. Used for Caddy's Cloudflare DNS-01
+# challenge (see caddy/Caddyfile) -- Vaultwarden's Bitwarden clients
+# require real HTTPS (WebCrypto needs a secure context), confirmed
+# 2026-09-04 via Vaultwarden's own wiki.
+prompt_if_placeholder "${DIR}/caddy/secrets.env.local" "CLOUDFLARE_API_TOKEN" \
+  "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
+
 # backup-mirror/ has no secrets.env.local -- it's not a container (see
 # its own mirror.sh header comment for why), and rsync-over-SSH uses key
 # auth set up separately, not anything generate-secrets.sh manages.
