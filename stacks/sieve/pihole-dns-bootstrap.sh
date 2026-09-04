@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 #
 # pihole-dns-bootstrap.sh — idempotently ensures Pi-hole's split-horizon DNS
-# entries (pihole/authelia/traefik/headscale .${DOMAIN} -> SIEVE_LAN_IP) are
-# present in its live config, via pihole-FTL's own config CLI instead of a
-# dropped-in dnsmasq.d file.
+# entries are present in its live config, via pihole-FTL's own config CLI
+# instead of a dropped-in dnsmasq.d file. Originally just sieve's own four
+# subdomains (all -> SIEVE_LAN_IP) -- generalized 2026-09-04 to also cover
+# silo's Traefik-fronted apps and cellar's Vaultwarden, each pointing at
+# their own node's LAN IP (see HOST_TARGETS below), after silo's/cellar's
+# ufw-bypass fixes that day made these hostnames the ONLY working path to
+# those apps (their old raw ports are gone) -- run this from sieve any
+# time a new cross-node hostname needs adding, no admin-UI clicking.
 #
 # Why this exists (2026-08-30): the original approach was a rendered
 # custom-dns/*.conf file bind-mounted into /etc/dnsmasq.d/. That's a v5-era
@@ -62,6 +67,12 @@ set +a
 
 : "${DOMAIN:?DOMAIN not set in .env.local — fill it in first, see README.md}"
 : "${SIEVE_LAN_IP:?SIEVE_LAN_IP not set in .env.local — fill it in first, see README.md}"
+# Added 2026-09-04, alongside HOST_TARGETS below -- confirm these match
+# stacks/silo/.env.local's own SILO_LAN_IP and stacks/cellar/.env.local's
+# own CELLAR_LAN_IP exactly, same cross-node-value discipline as every
+# other place this fleet passes a LAN IP between nodes' .env.local files.
+: "${SILO_LAN_IP:?SILO_LAN_IP not set in .env.local — fill it in first, see README.md}"
+: "${CELLAR_LAN_IP:?CELLAR_LAN_IP not set in .env.local — fill it in first, see README.md}"
 
 log()  { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -77,9 +88,32 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   log "DRY RUN — reading current config for real, nothing will actually be changed"
 fi
 
-# Same subdomain list as the old custom-dns template — add to this array if
-# more sieve-hosted apps get their own Traefik-fronted subdomain later.
-SUBDOMAINS=(pihole authelia traefik headscale)
+# subdomain:TARGET_IP_VAR pairs -- generalized 2026-09-04 from the original
+# flat SUBDOMAINS list (which assumed every entry pointed at SIEVE_LAN_IP).
+# Add a line here any time a new cross-node hostname needs a DNS entry --
+# TARGET_IP_VAR must be a variable already sourced above (SIEVE_LAN_IP/
+# SILO_LAN_IP/CELLAR_LAN_IP), resolved below via bash indirect expansion.
+HOST_TARGETS=(
+  "pihole:SIEVE_LAN_IP"
+  "authelia:SIEVE_LAN_IP"
+  "traefik:SIEVE_LAN_IP"
+  "headscale:SIEVE_LAN_IP"
+  # silo's Traefik-fronted apps, added 2026-09-04 -- see
+  # stacks/silo/README.md's Traefik section. komodo/scrutiny/homepage/
+  # speedtest-tracker have NO other way to be reached at all as of that
+  # day (their old raw ports are gone); netalertx keeps its raw port too
+  # but is routed here for consistency, same as every other silo UI.
+  "komodo:SILO_LAN_IP"
+  "scrutiny:SILO_LAN_IP"
+  "netalertx:SILO_LAN_IP"
+  "homepage:SILO_LAN_IP"
+  "speedtest:SILO_LAN_IP"
+  # cellar's Vaultwarden, added 2026-09-04 -- see
+  # stacks/cellar/README.md's caddy section. Real HTTPS via Caddy/
+  # Cloudflare DNS-01 is not optional here (Bitwarden clients refuse
+  # plain HTTP), and this hostname is the only way to reach it at all.
+  "vault:CELLAR_LAN_IP"
+)
 
 log "Reading current misc.dnsmasq_lines from the running pihole container"
 CURRENT_RAW="$(${DOCKER_CMD} exec pihole pihole-FTL --config misc.dnsmasq_lines)" \
@@ -105,8 +139,11 @@ echo "  Currently set: ${#CURRENT_LINES[@]} line(s)"
 # rather than overwriting the array wholesale.
 declare -a MERGED=("${CURRENT_LINES[@]}")
 declare -a MISSING=()
-for sub in "${SUBDOMAINS[@]}"; do
-  for desired in "address=/${sub}.${DOMAIN}/${SIEVE_LAN_IP}" "address=/${sub}.${DOMAIN}/::"; do
+for entry in "${HOST_TARGETS[@]}"; do
+  sub="${entry%%:*}"
+  ip_var="${entry#*:}"
+  ip="${!ip_var}"
+  for desired in "address=/${sub}.${DOMAIN}/${ip}" "address=/${sub}.${DOMAIN}/::"; do
     found=0
     for existing in "${CURRENT_LINES[@]}"; do
       [[ "$existing" == "$desired" ]] && { found=1; break; }
@@ -119,7 +156,7 @@ for sub in "${SUBDOMAINS[@]}"; do
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
-  log "All $((${#SUBDOMAINS[@]} * 2)) split-horizon entries (A + AAAA-block per subdomain) already present — nothing to do."
+  log "All $((${#HOST_TARGETS[@]} * 2)) split-horizon entries (A + AAAA-block per hostname) already present — nothing to do."
   exit 0
 fi
 

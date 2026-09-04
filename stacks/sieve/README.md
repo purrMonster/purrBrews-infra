@@ -119,7 +119,7 @@ this at all). Traefik's own Host-rule routing (see each app's
 
 ```sh
 ./compose.sh pihole    up -d
-./pihole-dns-bootstrap.sh --dry-run # preview, then run for real (see below) — sets pihole/authelia/traefik/headscale split-horizon entries via pihole-FTL's own config API
+./pihole-dns-bootstrap.sh --dry-run # preview, then run for real (see below) — sets every cross-node hostname's split-horizon entry via pihole-FTL's own config API
 ./compose.sh lldap     up -d
 ./lldap-bootstrap.sh --dry-run # preview, then run for real (see below) — creates LLDAP_INFRA_ADMIN_GROUP + adds barista, via lldap's API
 ./compose.sh authelia  up -d   # verify login against lldap before continuing
@@ -186,9 +186,16 @@ diagnosis). The real v6 mechanism is `pihole.toml`'s `misc.dnsmasq_lines`
 array — a raw dnsmasq-config-line passthrough (same `address=/domain/ip`
 syntax as before, just relocated), set via `pihole-FTL --config
 misc.dnsmasq_lines '[...]'` instead of a file. This script sets it
-idempotently: reads the current value, adds only whatever's missing
-(pihole/authelia/traefik/headscale `.${DOMAIN}` -> `SIEVE_LAN_IP`), and
-restarts the container only if something actually changed.
+idempotently: reads the current value, adds only whatever's missing, and
+restarts the container only if something actually changed. Originally just
+sieve's own four subdomains (all -> `SIEVE_LAN_IP`) — generalized
+2026-09-04 to a `HOST_TARGETS` array of `subdomain:TARGET_IP_VAR` pairs
+(was a flat `SUBDOMAINS` list before that), once silo's and cellar's own
+Traefik/Caddy rework that same day made their hostnames the *only* way to
+reach several apps at all (their old raw ports were removed). Add a line
+to `HOST_TARGETS` any time a new cross-node hostname needs a DNS entry —
+`TARGET_IP_VAR` just needs to already be sourced from `.env.local` (see
+the script's own top-of-file guard clauses).
 
 Each subdomain also gets an `address=/domain/::` line (added 2026-08-30,
 during `cloudflared` bring-up) — `address=/domain/ip` only intercepts A
@@ -211,8 +218,8 @@ another one gets exposed through `cloudflared`.
 ```
 
 Run it any time after `./compose.sh pihole up -d` — nothing else needs to
-be up first, and it's safe to re-run (e.g. after adding a new subdomain to
-the `SUBDOMAINS` array at the top of the script).
+be up first, and it's safe to re-run (e.g. after adding a new hostname to
+the `HOST_TARGETS` array at the top of the script).
 
 ### `lldap-bootstrap.sh` — group provisioning via lldap's API (added 2026-08-30)
 
@@ -370,14 +377,21 @@ its own `ufw` rule scoped to your LAN subnet, same as always.
 
 ## Split-horizon DNS
 
-`pihole-dns-bootstrap.sh` sets the sieve-hosted subdomains (pihole,
-authelia, traefik, headscale) resolving to `SIEVE_LAN_IP` on the LAN,
-directly in Pi-hole's own live config (see that script's section above —
-this used to be a rendered `custom-dns/*.conf` file, which turned out to be
-inert under Pi-hole v6). Services that end up on percolator/mochaPot later
-get their **own** entries pointing at *that* node's LAN IP — sieve's
-Traefik only fronts the external tunnel, per the hybrid split-horizon
-architecture (see the initiation doc, Section 0.3 / WBS 18.2).
+`pihole-dns-bootstrap.sh` sets every cross-node hostname's split-horizon
+entry directly in Pi-hole's own live config (see that script's section
+above — this used to be a rendered `custom-dns/*.conf` file, which turned
+out to be inert under Pi-hole v6): sieve's own four subdomains (pihole,
+authelia, traefik, headscale) resolve to `SIEVE_LAN_IP`; silo's five
+Traefik-fronted apps (komodo, scrutiny, netalertx, homepage, speedtest)
+resolve to `SILO_LAN_IP`; cellar's Vaultwarden (vault) resolves to
+`CELLAR_LAN_IP` — each pointing at *that* node's own LAN IP, not sieve's,
+per the hybrid split-horizon architecture (see the initiation doc,
+Section 0.3 / WBS 18.2). Added 2026-09-04, once silo's Docker-NAT-
+bypasses-ufw fix and cellar's Caddy/HTTPS requirement each made a real
+hostname the *only* remaining way to reach several apps — this isn't
+optional cosmetic DNS, komodo.${DOMAIN} etc. and vault.${DOMAIN} won't
+resolve at all until this script has been run with `SILO_LAN_IP`/
+`CELLAR_LAN_IP` filled in on sieve's own `.env.local`.
 
 ## Known gaps / things to double-check before relying on this
 

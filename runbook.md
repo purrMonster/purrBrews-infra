@@ -1228,3 +1228,43 @@ silo earlier tonight, not fixed here (SMB's own login is the actual
 protection regardless, so this isn't a "wide open" situation the way
 Scrutiny's was, but the ufw rule itself still doesn't do what it looks
 like it does).
+
+User Penguin asked whether sieve's Pi-hole Local DNS Records could be set
+via a file/config instead of clicking through the admin UI, given all
+the "add a Local DNS Record" instructions left open in silo's and
+cellar's README sections tonight. Turned out this fleet already solved
+exactly this problem, on 2026-08-30, for sieve's own subdomains --
+`pihole-dns-bootstrap.sh` sets entries idempotently via `pihole-FTL
+--config misc.dnsmasq_lines`, the real Pi-hole v6 mechanism (v6 generates
+dnsmasq's config from `/etc/pihole/pihole.toml` at every startup and
+never reads `/etc/dnsmasq.d`, confirmed the hard way that day when a
+rendered custom-dns file sat there completely inert). No UI clicking
+needed at all -- just hadn't been extended past sieve's own four
+subdomains yet.
+
+Generalized it: the old flat `SUBDOMAINS` array (every entry assumed
+`SIEVE_LAN_IP`) became `HOST_TARGETS`, an array of `subdomain:
+TARGET_IP_VAR` pairs resolved via bash indirect expansion
+(`ip="${!ip_var}"`) -- verified the indirect-expansion and idempotency
+logic in an isolated standalone test before touching the real script,
+since this device bridge can't functionally test it against a live
+Pi-hole container (that only runs on sieve, reached over SSH, not
+through this session's device bridge to roastery). Added silo's five
+Traefik-fronted hostnames (`SILO_LAN_IP`) and cellar's `vault`
+(`CELLAR_LAN_IP`). Added `SILO_LAN_IP`/`CELLAR_LAN_IP` to
+`stacks/sieve/local.env.example` -- not yet in the live `.env.local` on
+sieve, same "setup-secrets.sh won't retroactively add a new key" gap
+hit before with `SILO_LAN_INTERFACE` etc. -- needs adding by hand before
+this script can run for real. Updated `stacks/sieve/README.md`'s
+pihole-dns-bootstrap.sh section and the Split-horizon DNS section to
+match, and flagged plainly that this isn't cosmetic anymore: several of
+silo's and cellar's apps have literally no other way to be reached until
+this actually runs.
+
+### Pending, this entry
+
+- Fill in `SILO_LAN_IP`/`CELLAR_LAN_IP` on sieve's real `.env.local`
+  (not just the example), then run `./pihole-dns-bootstrap.sh --dry-run`
+  to preview, then for real -- this is now the actual blocker for
+  reaching komodo/scrutiny/netalertx/homepage/speedtest.${DOMAIN} and
+  vault.${DOMAIN}, not a nice-to-have.
