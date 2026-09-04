@@ -7,22 +7,38 @@ services:
       - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
       - "--api.dashboard=false"
-      # No providers.docker here, same reasoning as percolator's and
-      # mochaPot's lite Traefik instances: silo's apps aren't on a shared
-      # Docker network (each app runs in its own per-directory compose
-      # project's isolated default network -- see diun/docker-compose.yml's
-      # own comment on this), and every app already publishes its own
-      # host port. Routes via the file provider straight to
-      # ${SILO_LAN_IP}:<published-port>, not container DNS.
+      # No providers.docker here -- deliberately kept on the file
+      # provider even after silo_net was added 2026-09-04, since
+      # dynamic.yml.template already existed and per-service docker
+      # labels would mean touching every app's compose file a second
+      # time for no real benefit at this app count. Routes via container
+      # DNS on silo_net now (changed same day from ${SILO_LAN_IP}:
+      # <published-port> -- see this file's own closing comment), file
+      # provider just supplies the router/service definitions instead of
+      # Docker labels supplying them.
     ports:
       - "80:80"
     volumes:
       - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+    networks:
+      - silo_net
     restart: unless-stopped
     # Added 2026-09-04, retrofitted onto an already-live silo -- unlike
     # percolator/mochaPot (where "Traefik last, once healthy" describes
     # apps that don't exist yet), every app this fronts (Komodo, Scrutiny,
-    # NetAlertX, Homepage, Speedtest-tracker) is already up and reachable
-    # on its own raw port. This ADDS a gated path in parallel; it does not
-    # remove the existing ones -- see README's Traefik section for why
-    # that's a real gap, not an oversight, and what closes it.
+    # Homepage, Speedtest-tracker) was already up and reachable on its own
+    # raw port. Originally routed via ${SILO_LAN_IP}:<published-port>
+    # (see dynamic.yml.template's own history) -- changed same day, before
+    # ever bringing this up for real, once Docker's own iptables DNAT for
+    # those published ports turned out to bypass ufw entirely (confirmed
+    # on Komodo's port, see the runbook's 2026-09-04 entry). Joins
+    # silo_net (see ../compose.sh) and routes to each app by container
+    # name instead -- those apps no longer publish a host port at all, so
+    # this is now the ONLY path in for them, not a parallel one.
+    # NetAlertX is the one exception, still reached via ${SILO_LAN_IP} --
+    # network_mode: host means it can't join silo_net, same structural
+    # exception as sieve's Pi-hole/percolator's Home Assistant.
+
+networks:
+  silo_net:
+    external: true

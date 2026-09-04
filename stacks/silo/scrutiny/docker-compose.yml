@@ -16,16 +16,15 @@ services:
       - SYS_ADMIN   # smartctl access for NVMe drives — drop this if silo
                     # genuinely has no NVMe (narrower capability grant),
                     # but harmless to leave if unsure.
-    ports:
-      # Host-side 8081, not Scrutiny's own default 8080 — that's already
-      # claimed by speedtest-tracker on this same node (see the Ports
-      # table in README.md). Container's own internal port is untouched.
-      - "8081:8080"
-      # InfluxDB's admin port (8086) is deliberately NOT published — the
-      # omnibus image talks to its own embedded InfluxDB over localhost
-      # inside the container, so nothing external needs this. Add a
-      # mapping later only if you want to query InfluxDB directly for
-      # debugging.
+    # No ports: mapping as of 2026-09-04 -- was "8081:8080" until then.
+    # Docker's own iptables DNAT for published bridge-network ports
+    # bypasses ufw entirely (confirmed on silo's Komodo port -- see the
+    # runbook's 2026-09-04 entry), and this app has zero auth of its own
+    # (see Known gaps), so a ufw-only "fix" would have been no fix at
+    # all. Reachable now only via silo's Traefik (silo_net, container
+    # DNS, internal port 8080 unchanged). InfluxDB's admin port (8086)
+    # was never published either way -- the omnibus image talks to its
+    # own embedded InfluxDB over localhost inside the container.
     volumes:
       - /srv/data/scrutiny/config:/opt/scrutiny/config
       - /srv/data/scrutiny/influxdb:/opt/scrutiny/influxdb
@@ -51,7 +50,11 @@ services:
     # No login/auth exists in this app at all — not a documented "put it
     # behind your own auth" design choice, just genuinely absent (no
     # README section on it, no CVEs on file either — checked, not
-    # assumed). Same "LAN-reachable, not yet gated" acceptance as
-    # homepage/lldap on this fleet, not a new exception — see README
-    # Known gaps for the backlog to route this through Traefik/Authelia
-    # like everything else in that category eventually should.
+    # assumed). Now routed through silo's Traefik/Authelia (see the
+    # ports: comment above and README) -- that's the only auth this app
+    # has, since it has none of its own.
+
+networks:
+  default:
+    name: silo_net
+    external: true

@@ -9,13 +9,20 @@
 ## NetAlertX/Homepage/Speedtest-tracker) was sitting on a raw, ungated
 ## port while sieve gates even its own Traefik dashboard. This closes that.
 ##
-## Routing is by Host() header, not container DNS -- silo's apps aren't on
-## a shared Docker network (see traefik/docker-compose.yml's own comment),
-## so each service block below points straight at ${SILO_LAN_IP}:<the
-## app's existing published port>. No app's own docker-compose.yml or
-## port mapping changes -- this adds a gated path in parallel with the
-## existing raw ports, it doesn't replace them yet (see README's Traefik
-## section for the follow-up that actually closes that gap).
+## Routing is by Host() header for disambiguation (one Traefik entrypoint,
+## five apps), with backends reached over silo_net by container name --
+## changed 2026-09-04 from the original ${SILO_LAN_IP}:<published-port>
+## design, same day, before ever bringing this up for real: Docker's own
+## iptables DNAT for those published ports turned out to bypass ufw
+## entirely (confirmed on Komodo's port -- see the runbook's 2026-09-04
+## entry), which meant a ufw rule "restricting" any of them was a no-op.
+## Komodo/Scrutiny/Homepage/Speedtest-tracker had their ports: mappings
+## removed entirely as part of the same fix (see each app's own
+## docker-compose.yml) -- this is now their ONLY path in, not a parallel
+## one. NetAlertX is the one exception, still reached via ${SILO_LAN_IP}
+## -- network_mode: host can't join silo_net, and isn't subject to the
+## same ufw-bypass issue in the first place (host networking binds
+## directly to the host's real network stack, no Docker NAT involved).
 ##
 ## These Host() rules need komodo.${DOMAIN} / scrutiny.${DOMAIN} / etc.
 ## to actually resolve to ${SILO_LAN_IP} on the LAN. No public DNS record
@@ -90,26 +97,39 @@ http:
       middlewares: [authelia]
 
   services:
+    # Container-DNS backends, changed 2026-09-04 (were all
+    # ${SILO_LAN_IP}:<published-port> originally -- see the runbook's
+    # same-day entry for why: Docker's own iptables DNAT for those
+    # published ports bypassed ufw entirely, so those ports got
+    # unpublished from every app below except netalertx, and Traefik
+    # joined silo_net to reach them by name instead). Each backend's port
+    # is the CONTAINER's own internal port, not the old host-side publish
+    # (e.g. scrutiny is 8080 here, not the old host-side 8081).
     komodo:
       loadBalancer:
         servers:
-          - url: "http://${SILO_LAN_IP}:9120"
+          - url: "http://komodo-core:9120"
     scrutiny:
       loadBalancer:
         servers:
-          - url: "http://${SILO_LAN_IP}:8081"
+          - url: "http://scrutiny:8080"
     netalertx:
+      # Still LAN-IP-based, deliberately -- network_mode: host means it
+      # can't join silo_net, same structural exception as sieve's
+      # Pi-hole/percolator's Home Assistant. Its raw port (20211) stays
+      # published and ufw-governed correctly (host networking isn't
+      # subject to the Docker-NAT-bypasses-ufw issue the other four had).
       loadBalancer:
         servers:
           - url: "http://${SILO_LAN_IP}:20211"
     homepage:
       loadBalancer:
         servers:
-          - url: "http://${SILO_LAN_IP}:3000"
+          - url: "http://homepage:3000"
     speedtest-tracker:
       loadBalancer:
         servers:
-          - url: "http://${SILO_LAN_IP}:8080"
+          - url: "http://speedtest-tracker:80"
 
 # Deliberately NOT routed here: Diun (no web UI at all -- notification-
 # only) and Unbound/CrowdSec/the plain "speedtest" data-source container

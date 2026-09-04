@@ -1069,3 +1069,45 @@ not confirmed against this fleet specifically) -- if true, every `ufw
 allow from 192.168.0.0/24 ...` rule across every node's README, not just
 silo's new Traefik ports, is currently a no-op. Worth a real test on silo
 directly before trusting any of this fleet's ufw-based access control.
+
+User Penguin then tested this directly on silo before trusting it: port
+9120 (Komodo) reachable regardless of any ufw rule, while a comparable
+test on sieve was correctly blocked. Confirmed the theory -- Docker's own
+`DOCKER` iptables chain handles published bridge-network ports in the
+`FORWARD` path, ahead of where ufw's `INPUT` filtering ever applies, so
+those ports were never actually governed by ufw at all; sieve's apps
+mostly avoid this because they're either host-networked (Pi-hole) or
+never publish a host port in the first place (routed only via
+`sieve_proxy` + Docker labels). Agreed to fix it properly rather than
+patch around it with `ufw-docker`: added `silo_net`, an external Docker
+network on the same idempotent-create pattern as percolator's
+`percolator_net` (`compose.sh` creates it before every invocation).
+Rewired Komodo (mongo/core/periphery, via a top-level `networks: {
+default: { name: silo_net, external: true } }` override rather than
+touching each service), Scrutiny, Homepage, and Traefik itself onto it;
+removed the now-redundant `ports:` mapping from Scrutiny, Homepage, and
+Speedtest-tracker entirely -- Traefik is now their only path in, reached
+by container name instead of `${SILO_LAN_IP}:<port>`.
+
+Caught a real mistake mid-build, before it shipped: Komodo's port 9120
+was initially unpublished the same way as the other three. Wrong --
+Komodo Core has to stay reachable from OTHER PHYSICAL HOSTS (percolator/
+cellar/mochaPot's future Periphery agents connect to it directly over the
+LAN, and Docker networks don't span hosts, same constraint already known
+from Immich reaching percolator's Postgres/valkey). Reverted before
+delivering: `ports: ["9120:9120"]` stays, Komodo joins `silo_net` in
+addition rather than instead, and the ufw-bypass issue stays open and
+documented for this one port specifically -- its real security boundary
+is its own JWT/webhook/admin secrets, not the network layer, same
+conclusion the original build already reached for a different reason.
+
+Updated `stacks/silo/README.md` throughout (Ports table, every affected
+app's bring-up section, Known gaps) to match: three apps have zero
+fallback access until sieve's Pi-hole gets Local DNS Records for their
+new `*.${DOMAIN}` hostnames (not added yet -- a change on sieve, not
+silo, not made tonight) and `traefik` is up. Flagged plainly that this
+ufw-bypass issue is fleet-wide, not silo-specific -- every
+`sudo ufw allow from 192.168.0.0/24 ...` rule on sieve/percolator/
+cellar/mochaPot guarding a bridge-published (not host-networked) port is
+confirmed a no-op too, not just theoretically, and none of those are
+fixed yet.

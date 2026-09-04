@@ -7,15 +7,21 @@ services:
     # discipline as netalertx's namespace move.
     image: lscr.io/linuxserver/speedtest-tracker:v1.15.0-ls170
     container_name: speedtest-tracker
-    ports:
-      - "8080:80"
-      - "8443:443"
+    # No ports: mapping as of 2026-09-04 -- was "8080:80" / "8443:443"
+    # until then, host-published directly. Now routed through silo's
+    # Traefik (silo_net, container DNS, plain-HTTP internal port 80 --
+    # 443/self-signed-TLS inside the container is unused either way,
+    # Traefik's own entrypoint is what's actually exposed now).
     environment:
       # PUID/PGID left at the image's own default (not guessed/hardcoded) —
       # same accepted gap as netalertx's PUID/PGID, see README Known gaps.
       TZ: ${TZ}
       APP_TIMEZONE: ${TZ}
-      APP_URL: http://${SILO_LAN_IP}:8080
+      # Updated 2026-09-04 for the real hostname now that this sits
+      # behind Traefik -- requires a Local DNS Record for
+      # speedtest.${DOMAIN} in sieve's Pi-hole pointing at ${SILO_LAN_IP}
+      # (not added yet, see README).
+      APP_URL: http://speedtest.${DOMAIN}
       DB_CONNECTION: sqlite
       # Laravel encryption key — REQUIRED, no default, app won't run
       # correctly without one. Generated in generate-secrets.sh as
@@ -43,3 +49,8 @@ services:
     volumes:
       - /srv/data/speedtest-tracker/config:/config
     restart: unless-stopped
+
+networks:
+  default:
+    name: silo_net
+    external: true

@@ -20,8 +20,15 @@ Apps come up in this order:
 5. **traefik** — added 2026-09-04, gates the UIs above behind sieve's
    Authelia. Retrofitted onto an already-live silo rather than sequenced
    before its apps (unlike percolator's/mochaPot's own Traefik instances,
-   which really do come last because their apps didn't exist yet) — bring
-   it up whenever, it doesn't block or get blocked by anything above.
+   which really do come last because their apps didn't exist yet).
+   Doesn't block anything at the compose level — `./compose.sh` creates
+   the `silo_net` network any app needs on its own, no explicit ordering
+   required — but **practically**, homepage/scrutiny/speedtest-tracker
+   lost their old published ports as part of this same change, so they
+   have no fallback UI access until both `traefik` is up and sieve's
+   Pi-hole has the Local DNS Records this needs (see traefik's own
+   section) — bring `traefik` up and add those records promptly after
+   re-deploying any of those three, don't leave a gap between them.
 
 **crowdsec lives on `stacks/sieve/`, not here** (decided 2026-09-01,
 despite Section 18.3 naming silo as its home) — see
@@ -47,19 +54,24 @@ here shares a port space with sieve's table in `stacks/sieve/README.md`.
 | Port | Proto | Owner | Notes |
 |------|-------|-------|-------|
 | 53 | tcp+udp | unbound | Recursive resolver — access-control restricted to sieve only, see below. |
-| 3000 | tcp | homepage | Stopgap dashboard, LAN-reachable directly — not yet routed through Traefik. |
 | 20211 | tcp | netalertx | Web UI, password-protected (see below). `network_mode: host`, same category as sieve's Pi-hole — no `ports:` list of its own, binds directly on the host. |
 | 20212 | tcp | netalertx | GraphQL API — bound on the host (host networking) but deliberately **not** given a LAN-wide ufw rule (see netalertx's own section) — open it only if the UI turns out to need direct browser access to it, which isn't confirmed either way. |
-| 8080 | tcp | speedtest-tracker | Web UI. |
-| 8443 | tcp | speedtest-tracker | Web UI, HTTPS. |
-| 8081 | tcp | scrutiny | Web UI — moved off Scrutiny's own default 8080 to dodge the speedtest-tracker collision above (container's own internal port is still 8080, only the host-side publish moved). No auth in this app at all — see Known gaps. |
-| 9120 | tcp | komodo | Core's web UI/API. Also needs to accept connections from future nodes' Periphery agents once percolator/cellar/mochaPot exist — see komodo's own section. |
-| 80 | tcp | traefik | Added 2026-09-04 — gates the apps above behind sieve's Authelia. See its own section below; the raw ports above all stay open too for now, see Known gaps. |
+| 9120 | tcp | komodo | Core's web UI/API, **deliberately still published** even after 2026-09-04's silo_net rework (see Known gaps and komodo's own section) — has to stay reachable from other physical hosts (percolator/cellar/mochaPot's future Periphery agents), which a Docker-network-only setup can't do. |
+| 80 | tcp | traefik | Gates komodo.${DOMAIN}/scrutiny.${DOMAIN}/homepage.${DOMAIN}/speedtest.${DOMAIN} behind sieve's Authelia. See its own section below. |
 
-Not published to the host at all, for contrast: scrutiny's embedded
-InfluxDB (8086 — reached over loopback inside its own container, nothing
-external needs it), diun and its docker-socket-proxy sidecar (no web UI
-or API surface, nothing to publish).
+**Changed 2026-09-04**: homepage (was 3000), scrutiny (was 8081), and
+speedtest-tracker (was 8080/8443) no longer publish a host port at all —
+see the runbook's 2026-09-04 entry for why (Docker's own iptables DNAT
+for published bridge-network ports bypasses ufw entirely, discovered on
+Komodo's port). They're reachable only via Traefik now, over the new
+`silo_net` Docker network (container DNS), same pattern percolator
+already uses for Nextcloud/Paperless-ngx. Komodo is the one exception —
+see the table row above.
+
+Not published to the host at all either way: scrutiny's embedded InfluxDB
+(8086 — reached over loopback inside its own container, nothing external
+needs it), diun and its docker-socket-proxy sidecar (no web UI or API
+surface, nothing to publish).
 
 ## Secrets: local generation
 
@@ -137,15 +149,22 @@ a full rewrite).
 ### homepage
 
 ```sh
-sudo ufw allow from 192.168.0.0/24 to any port 3000 proto tcp
 ./compose.sh homepage up -d
 ```
 
-Reachable at `http://<SILO_LAN_IP>:3000`. To add a link (e.g. once another
-silo app is up): edit `homepage/config/services.yaml.template`, then
-`./render-configs.sh && ./compose.sh homepage restart`. See the runbook's
-2026-08-31 "Stopgap Homepage dashboard" entry for why this app, why
-`HOMEPAGE_ALLOWED_HOSTS` is required, and the image pin.
+**Changed 2026-09-04**: no longer publishes a host port (was `3000:3000`)
+— reachable only via `http://homepage.${DOMAIN}` through silo's Traefik
+now (see traefik's own section), which needs a Local DNS Record added in
+sieve's Pi-hole first (see Known gaps) or it won't resolve yet. If
+`traefik` isn't up yet, there's currently no way to reach this directly —
+bring `traefik` up first, or temporarily add `ports: ["3000:3000"]` back
+for one-off access.
+
+To add a link (e.g. once another silo app is up): edit
+`homepage/config/services.yaml.template`, then `./render-configs.sh &&
+./compose.sh homepage restart`. See the runbook's 2026-08-31 "Stopgap
+Homepage dashboard" entry for why this app, why `HOMEPAGE_ALLOWED_HOSTS`
+is required, and the image pin.
 
 ### netalertx
 
@@ -209,12 +228,16 @@ the command above before assuming it's a scan-timing issue.
 
 ```sh
 sudo mkdir -p /srv/data/speedtest-tracker/config
-sudo ufw allow from 192.168.0.0/24 to any port 8080 proto tcp
-sudo ufw allow from 192.168.0.0/24 to any port 8443 proto tcp
 ./compose.sh speedtest-tracker up -d
 ```
 
-Log in at `http://<SILO_LAN_IP>:8080` with `barista` / the password from
+**Changed 2026-09-04**: no longer publishes a host port (was
+`8080:80`/`8443:443`) — reachable only via `http://speedtest.${DOMAIN}`
+through silo's Traefik now (needs a Local DNS Record in sieve's Pi-hole
+first, see Known gaps). If `traefik` isn't up yet, temporarily add
+`ports: ["8080:80"]` back for one-off access.
+
+Log in with `barista` / the password from
 `speedtest-tracker/secrets.env.local` (`SPEEDTEST_TRACKER_ADMIN_PASSWORD`)
 — **not** the image's own documented default (`admin@example.com` /
 `password`), which never gets created here since `ADMIN_EMAIL`/
@@ -267,14 +290,22 @@ with no disk access — that's the safety net here.
 
 ```sh
 sudo mkdir -p /srv/data/scrutiny/config /srv/data/scrutiny/influxdb
-sudo ufw allow from 192.168.0.0/24 to any port 8081 proto tcp
 ./compose.sh scrutiny up -d
 ```
 
-Reachable at `http://<SILO_LAN_IP>:8081` — **no login**, see Known gaps.
-Confirm it actually sees your disks (not just that the container started):
-open the UI and check every physical disk shows up with real S.M.A.R.T.
-data, not an error/missing state.
+**Changed 2026-09-04**: no longer publishes a host port (was `8081:8080`)
+— reachable only via `http://scrutiny.${DOMAIN}` through silo's Traefik
+now (needs a Local DNS Record in sieve's Pi-hole first, see Known gaps).
+Worth the change more than most: this app has **no login of its own** —
+Traefik/Authelia is the only auth it has ever had, so leaving it on a
+ufw-bypassable published port would have meant no real protection at
+all, not just a redundant second layer the way it is for netalertx. If
+`traefik` isn't up yet, temporarily add `ports: ["8081:8080"]` back for
+one-off access.
+
+Confirm it actually sees your disks (not just that the container
+started): open the UI and check every physical disk shows up with real
+S.M.A.R.T. data, not an error/missing state.
 
 ### diun
 
@@ -335,10 +366,25 @@ sudo ufw allow from 192.168.0.0/24 to any port 9120 proto tcp
 ./compose.sh komodo up -d
 ```
 
-Log in at `http://<SILO_LAN_IP>:9120` with `barista` / the password from
+Log in at `http://<SILO_LAN_IP>:9120` (still published, see below) or,
+once the Pi-hole DNS record exists, `http://komodo.${DOMAIN}` through
+Traefik/Authelia — with `barista` / the password from
 `komodo/secrets.env.local` (`KOMODO_INIT_ADMIN_PASSWORD`) — again, not
 the official reference file's own default (`admin`/`changeme`), never
 created here.
+
+**Unlike scrutiny/homepage/speedtest-tracker, this port could not be
+fully closed off in tonight's 2026-09-04 silo_net rework** — it has to
+stay reachable from other physical hosts (percolator/cellar/mochaPot's
+future Periphery agents connect to it directly over the LAN, and Docker
+networks don't span hosts), so `ports: ["9120:9120"]` stays in
+`komodo/docker-compose.yml`. It's also joined to `silo_net` now, so
+Traefik can front the browser-facing path too — both coexist. The
+ufw-bypass issue found on this exact port (see the runbook's 2026-09-04
+entry) is still unresolved for it specifically: the `ufw allow` rule
+below doesn't actually restrict who can reach it, Docker's own iptables
+handles published ports outside ufw's filtering. This wasn't overlooked
+tonight, it's the same tradeoff the original build already accepted.
 
 **Treat this app's credentials with real weight, not homelab-casual
 weight**: `KOMODO_JWT_SECRET`, `KOMODO_WEBHOOK_SECRET`, and the admin
@@ -347,7 +393,8 @@ Periphery's Docker socket mount) to every node Komodo ends up managing —
 see the compose file's own comment on `komodo-periphery`'s volumes for
 why. This isn't a bigger deal than, say, sieve's Cloudflare DNS API
 token, but it's in that same category, not the category of "another
-app's admin password."
+app's admin password." Given the port can't be closed off, those secrets
+are this app's actual security boundary, not the network layer.
 
 **Preparing percolator/cellar/mochaPot for Komodo management**, once
 those nodes physically exist: copy
@@ -367,37 +414,45 @@ while silo's Komodo (effective root on every node running a Periphery
 agent, see its own section above) sat wide open on a raw port. This adds
 the same ForwardAuth gate for Komodo, Scrutiny, NetAlertX, Homepage, and
 Speedtest-tracker. Lite pattern, same as percolator's/mochaPot's own
-Traefik instances — plain HTTP, no ACME/TLS, file-provider routing
-straight to `${SILO_LAN_IP}:<app's existing port>` rather than a shared
-Docker network (silo's apps each run in their own per-directory compose
-project's isolated network — see `diun/docker-compose.yml`'s own comment
-— so there's no container-DNS path between them).
+Traefik instances — plain HTTP, no ACME/TLS, file-provider routing for
+the router/middleware definitions.
+
+Backends are reached over a new `silo_net` Docker network (container
+DNS) for Scrutiny/Homepage/Speedtest-tracker/Komodo, same day this was
+built — not the original `${SILO_LAN_IP}:<published-port>` design, which
+turned out to be a dead end: Docker's own iptables DNAT for published
+bridge-network ports bypasses ufw entirely (found while testing this on
+Komodo's port, see the runbook's 2026-09-04 entry), so a ufw rule
+"restricting" any of those ports was doing nothing. Fixed properly for
+three of the five — Scrutiny, Homepage, and Speedtest-tracker had their
+`ports:` mappings removed entirely, so Traefik is now their *only* path
+in. Komodo couldn't get the same treatment (it has to stay reachable
+from other physical hosts' future Periphery agents, see its own section)
+— its port stays published and the ufw-bypass issue stays open for it,
+deliberately accepted, not fixed. NetAlertX is unaffected either way —
+`network_mode: host` was never subject to this issue in the first place.
 
 ```sh
 sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
 ./compose.sh traefik up -d
 ```
 
-Before this actually gates anything, two things need to happen that
-aren't done as part of this change:
+One thing still needs to happen before this is actually reachable by
+hostname — not done as part of this build:
 
-1. **Add Local DNS Records in sieve's Pi-hole** (Settings → Local DNS
-   Records, or `/etc/pihole/custom.list` directly) for `komodo.${DOMAIN}`,
-   `scrutiny.${DOMAIN}`, `netalertx.${DOMAIN}`, `homepage.${DOMAIN}`, and
-   `speedtest.${DOMAIN}`, each pointing at `${SILO_LAN_IP}`. This is a
-   change on sieve, not here — not made as part of this build. Silo's own
-   Unbound is *not* the right place for this: it's Pi-hole's upstream
-   resolver, access-restricted to accept queries from sieve alone (see
-   `unbound/local.env.example`'s own comment) — not something client
-   devices query directly. Until the records exist, test with:
-   ```sh
-   curl -H "Host: komodo.${DOMAIN}" http://<SILO_LAN_IP>/
-   ```
-2. **The raw ports in the table above are all still open and still
-   work.** This adds a gated path in parallel with direct access, it
-   doesn't replace it — going through `komodo.${DOMAIN}` gets you an
-   Authelia login, going straight to `<SILO_LAN_IP>:9120` still doesn't.
-   See Known gaps for what actually closes that.
+**Add Local DNS Records in sieve's Pi-hole** (Settings → Local DNS
+Records, or `/etc/pihole/custom.list` directly) for `komodo.${DOMAIN}`,
+`scrutiny.${DOMAIN}`, `netalertx.${DOMAIN}`, `homepage.${DOMAIN}`, and
+`speedtest.${DOMAIN}`, each pointing at `${SILO_LAN_IP}`. This is a
+change on sieve, not here. Silo's own Unbound is *not* the right place
+for this: it's Pi-hole's upstream resolver, access-restricted to accept
+queries from sieve alone (see `unbound/local.env.example`'s own comment)
+— not something client devices query directly. Until the records exist,
+Scrutiny/Homepage/Speedtest-tracker have **no way to be reached at all**
+(their raw ports are gone) — test with:
+```sh
+curl -H "Host: komodo.${DOMAIN}" http://<SILO_LAN_IP>/
+```
 
 ## Known gaps / things to double-check before relying on this
 
@@ -481,28 +536,37 @@ aren't done as part of this change:
   present on silo. No longer a gap; kept as a documented preflight step
   for any future node running its own Periphery.
 
-- **Traefik (added 2026-09-04) gates Komodo/Scrutiny/NetAlertX/Homepage/
-  Speedtest-tracker via sieve's Authelia, but this is not yet real access
-  control — two follow-ups are needed to close the gap, neither done
-  here:** (1) Local DNS Records for the five `*.${DOMAIN}` hostnames
-  need adding in sieve's Pi-hole (see traefik's own section above) before
-  the gated routes are even reachable by hostname; (2) every raw port in
-  the table above (`3000`, `20211`, `8080`/`8443`, `8081`, `9120`) is
-  still open and still works with no gate at all — until those are
-  firewalled off or otherwise restricted to Traefik-only access, going
-  through `komodo.${DOMAIN}` is a *parallel* path, not a *replacement*
-  one. Don't treat this as done until both are addressed.
-- **Worth verifying before relying on any ufw rule in this file (or any
-  other node's) for real access control: Docker manages its own iptables
-  rules for published container ports (`ports:` in a compose file), and
-  those rules are widely reported to bypass ufw's own filtering unless
-  specifically mitigated** (e.g. a `DOCKER-USER` iptables chain rule, or
-  publishing to a specific interface/`127.0.0.1` instead of `0.0.0.0`).
-  Not confirmed against this fleet's actual behavior either way — flagged
-  here because it would mean every `sudo ufw allow from 192.168.0.0/24
-  ...` rule in this README (and sieve's/percolator's/cellar's/mochaPot's)
-  is currently a no-op, and the LAN-wide "restriction" is actually
-  LAN-wide-open regardless of ufw. Worth a real test on silo directly
-  (`ufw deny` a published port, then try reaching it from another LAN
-  device) before trusting any of this fleet's ufw-based access control,
-  Traefik-gating included.
+- **Confirmed 2026-09-04, directly on silo, not just suspected: Docker's
+  own iptables DNAT for published bridge-network ports bypasses ufw
+  entirely.** User Penguin tested Komodo's port 9120 directly — reachable
+  regardless of any ufw rule, while a comparable test against a
+  host-networked service on sieve was correctly blocked. Root cause:
+  Docker's `DOCKER` chain sits in the `FORWARD` path, ahead of where
+  ufw's `INPUT` filtering applies — a published port never actually hits
+  ufw's rules at all. This is not sieve-vs-silo-specific; it applies to
+  every bridge-published Docker port on every node in this fleet. Fixed
+  properly for Scrutiny/Homepage/Speedtest-tracker on this node (their
+  `ports:` mappings were removed, they now join `silo_net` and are
+  reachable only via Traefik — see the traefik section above). **Not
+  fixed anywhere else in this fleet** — every `sudo ufw allow from
+  192.168.0.0/24 ...` rule on sieve/percolator/cellar/mochaPot for a
+  bridge-published (not host-networked) port is a no-op right now, not
+  just theoretically. Worth auditing each node's README for which rules
+  actually matter (host-networked services: fine) versus which ones look
+  like access control but aren't (bridge-published services: not fine).
+- **Komodo's port 9120 is the one deliberate, unresolved exception on
+  this node** — see its own section above for why (has to stay reachable
+  from other physical hosts' future Periphery agents, so it can't move to
+  `silo_net`-only the way the other three did). The ufw-bypass issue
+  above applies to it and isn't fixed. Its actual security boundary is
+  its own credentials (`KOMODO_JWT_SECRET`/`KOMODO_WEBHOOK_SECRET`/admin
+  password), not the network layer — treat those with real weight.
+- **The `komodo`/`scrutiny`/`homepage`/`speedtest-tracker` Ports table
+  entries above changed 2026-09-04 — homepage/scrutiny/speedtest-tracker
+  no longer publish anything.** Until sieve's Pi-hole gets the Local DNS
+  Records this needs (see traefik's own section), those three apps are
+  **not reachable by any means** — not the old raw port (gone), not yet
+  the new hostname (DNS not added). This isn't a partial gap the way it
+  would've been under the original parallel-path design; it's a full
+  outage for those three until the DNS records are added. Add them
+  before relying on this being "done."

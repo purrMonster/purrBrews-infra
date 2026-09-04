@@ -50,15 +50,41 @@ services:
       - mongo
     ports:
       - "9120:9120"
+    # Caught 2026-09-04, before ever bringing this up for real: this port
+    # was briefly unpublished entirely (routing only via silo's Traefik
+    # on silo_net) as part of the same fix that closed Scrutiny/Homepage/
+    # Speedtest-tracker's ufw-bypass gap -- wrong for Komodo specifically.
+    # Unlike those three, this one has to stay reachable from OTHER
+    # PHYSICAL HOSTS: percolator/cellar/mochaPot's future Periphery
+    # agents connect to Komodo Core over the LAN (Docker networks don't
+    # span hosts, same constraint as Immich reaching percolator's
+    # Postgres/valkey), on this exact port. Kept published. It's also on
+    # silo_net now (see this file's own networks: block below) so
+    # Traefik can reach it for the browser-facing komodo.${DOMAIN} path
+    # too -- both paths coexist, this port isn't Traefik-exclusive the
+    # way the other three became.
+    #
+    # This means Komodo's port genuinely can't be closed off the way the
+    # other three were -- the Docker-NAT-bypasses-ufw issue (see the
+    # runbook's 2026-09-04 entry) still applies to it, unresolved. Its
+    # real security boundary stays what the komodo-periphery volumes
+    # comment below already says: KOMODO_JWT_SECRET, KOMODO_WEBHOOK_SECRET,
+    # and the admin account, treated with root-SSH-key-level care. Not a
+    # gap introduced tonight -- the original build already reasoned this
+    # was inherent to what Komodo does, not something ufw was ever going
+    # to fix.
     environment:
       TZ: ${TZ}
       KOMODO_DATABASE_ADDRESS: mongo:27017
       KOMODO_DATABASE_USERNAME: ${KOMODO_DATABASE_USERNAME}
       KOMODO_DATABASE_PASSWORD: ${KOMODO_DATABASE_PASSWORD}
-      # Not routed through Traefik yet, same as every other silo app —
-      # used only for OAuth/webhook URL suggestions in the UI, not
+      # Updated 2026-09-04 -- Komodo now sits behind silo's Traefik
+      # (../traefik/), no ports: of its own to point at anymore. Requires
+      # a Local DNS Record for komodo.${DOMAIN} in sieve's Pi-hole
+      # pointing at ${SILO_LAN_IP} (not added yet -- see README). Still
+      # just used for OAuth/webhook URL suggestions in the UI, not
       # security-relevant on its own.
-      KOMODO_HOST: http://${SILO_LAN_IP}:9120
+      KOMODO_HOST: http://komodo.${DOMAIN}
       KOMODO_TITLE: purrBrews Komodo
       # Lets Periphery connect once it presents this key — Core writes its
       # own public key here on first boot; both containers share the same
@@ -125,3 +151,8 @@ services:
       # uses to find every stack/repo it manages on this host.
       - /etc/komodo:/etc/komodo
     restart: unless-stopped
+
+networks:
+  default:
+    name: silo_net
+    external: true
