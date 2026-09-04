@@ -1,0 +1,38 @@
+services:
+  vaultwarden:
+    # Confirmed 2026-09-03 via Vaultwarden's own wiki: this human-facing
+    # password vault, unrelated to how this fleet generates ITS OWN
+    # container secrets (that's generate-secrets.sh everywhere, unchanged).
+    # Docker Hub remains the maintainer-documented default (not deprecated
+    # in favor of GHCR, confirmed -- both are published, Hub is what their
+    # own docs/examples use). Single unified image since v1.17.0+, no
+    # arch/DB-specific tags needed.
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    environment:
+      TZ: ${TZ}
+      DOMAIN: http://${CELLAR_LAN_IP}:8000
+      # Argon2id PHC hash, not plaintext -- generate-secrets.sh below sets
+      # a random PLAINTEXT value as a working bootstrap default (still
+      # supported, just discouraged per Vaultwarden's own current docs).
+      # Upgrade path documented in README -- run
+      # `docker exec -it vaultwarden /vaultwarden hash` once this is up,
+      # paste the resulting $argon2id$... string in as ADMIN_TOKEN
+      # (doubling every $ to $$, compose does its own $ interpolation),
+      # restart.
+      ADMIN_TOKEN: ${VAULTWARDEN_ADMIN_TOKEN}
+      # true so the first real signup (yours) works -- MUST be flipped to
+      # "false" by hand once that account exists, confirmed this isn't
+      # something the app does automatically. Not automated here since it
+      # genuinely has to happen AFTER a real signup, not before -- same
+      # "manual, sequenced, can't be a static default" shape as Home
+      # Assistant's recorder config on percolator.
+      SIGNUPS_ALLOWED: "true"
+    volumes:
+      - /srv/data/vaultwarden:/data
+    ports:
+      - "8000:80"
+    restart: unless-stopped
+    # Confirmed 2026-09-03: embedded SQLite is Vaultwarden's own default
+    # and is adequate at household scale -- no external DB needed, no
+    # DATABASE_URL set.

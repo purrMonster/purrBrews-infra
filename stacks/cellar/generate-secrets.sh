@@ -91,19 +91,23 @@ prompt_if_placeholder() {
 }
 
 # --- Per-app secrets go here ------------------------------------------
-# One set_if_absent call per secret value, added as each app gets built —
-# see stacks/silo/generate-secrets.sh's own per-app section for real
-# worked examples (netalertx/speedtest-tracker/komodo). Nothing here yet:
-# cellar has no apps built out as of 2026-09-02.
-#
-#   set_if_absent "${DIR}/somesvc/secrets.env.local" "SOME_PASSWORD" "$(rand 16)"
-#
-# For a value that can't be randomly generated (an API token, etc.), use
-# prompt_if_placeholder instead:
-#
-#   prompt_if_placeholder "${DIR}/somesvc/secrets.env.local" "SOME_API_TOKEN" \
-#     "Some service API token" "REPLACE_ME_some_api_token" --secret
-# ------------------------------------------------------------------------
+
+log "vaultwarden/secrets.env.local"
+# Plaintext token, NOT the Argon2id hash Vaultwarden's own current docs
+# recommend -- generated here as a working bootstrap default (still
+# supported, confirmed 2026-09-03), documented in README as a known gap
+# to upgrade once the container's up (needs `docker exec -it vaultwarden
+# /vaultwarden hash`, which needs the container already running --
+# chicken-and-egg, can't be scripted here).
+set_if_absent "${DIR}/vaultwarden/secrets.env.local" "VAULTWARDEN_ADMIN_TOKEN" "$(rand 32)"
+
+log "smb/secrets.env.local"
+set_if_absent "${DIR}/smb/secrets.env.local" "SMB_BARISTA_PASSWORD" "$(rand 16)"
+
+# backup-mirror/ has no secrets.env.local -- it's not a container (see
+# its own mirror.sh header comment for why), and rsync-over-SSH uses key
+# auth set up separately, not anything generate-secrets.sh manages.
+# --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true
 
@@ -118,7 +122,7 @@ for f in "${DIR}"/*/secrets.env.local; do
 done
 
 if [[ ${#still_needed[@]} -eq 0 ]]; then
-  echo "Done — nothing to generate yet (cellar has no apps with secrets)."
+  echo "Done — nothing still needs a real value."
 else
   echo "Done, but these still need a real value — re-run this script anytime"
   echo "you have them (or edit the file directly):"

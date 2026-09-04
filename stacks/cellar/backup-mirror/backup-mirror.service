@@ -1,0 +1,9 @@
+[Unit]
+Description=cellar local secondary backup mirror (rsync)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=barista
+ExecStart=/opt/purrbrews/stacks/cellar/backup-mirror/mirror.sh

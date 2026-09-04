@@ -1,0 +1,49 @@
+services:
+  smb:
+    # Confirmed 2026-09-03: dperson/samba (the commonly-tutorialized image)
+    # is stale/unmaintained. ghcr.io/servercontainers/samba is the current
+    # actively-maintained choice -- commits as recent as 2026-07-11 at
+    # research time, versioned tags like a3.15.0-s4.15.2 (Alpine ver +
+    # Samba ver) available if a pin is wanted later; :latest for now,
+    # matching how new this image's adoption is in this fleet.
+    image: ghcr.io/servercontainers/samba:latest
+    container_name: smb
+    environment:
+      TZ: ${TZ}
+      SAMBA_CONF_WORKGROUP: WORKGROUP
+      # Standalone, not a domain member -- this is a household LAN, no AD.
+      SAMBA_CONF_SERVER_ROLE: standalone
+      AVAHI_DISABLE: "1"
+      # One share, household + app archives together for now -- confirmed
+      # via initiation.txt Section 18.4 these are meant to be reachable by
+      # any device on the fleet (percolator, mochaPot, roastery, americano,
+      # latte), not just Docker hosts, hence SMB. Env-var-driven config
+      # per ghcr.io/servercontainers/samba's own docs -- confirmed exact
+      # shape 2026-09-03.
+      SAMBA_VOLUME_CONFIG_household: "[household]; path=/shares/household; valid users = barista; guest ok = no; read only = no; browseable = yes"
+      SAMBA_VOLUME_CONFIG_archive: "[archive]; path=/shares/archive; valid users = barista; guest ok = no; read only = no; browseable = yes"
+      ACCOUNT_barista: ${SMB_BARISTA_PASSWORD}
+      UID_barista: "1000"
+    volumes:
+      # cellar's 1TB HDD -- household general-purpose share.
+      - /srv/media/household:/shares/household
+      # App-specific archive shares (Immich originals, Paperless-ngx
+      # archive, Nextcloud cold storage) live under one archive/ tree for
+      # now, per-app subfolders added as percolator/mochaPot actually
+      # start writing to them -- not pre-split into separate SMB shares
+      # per app since nothing consumes them individually via SMB yet
+      # (they'll be NFS-mounted by the consuming apps instead, see
+      # README's NFS section -- this SMB share is for direct human/LAN
+      # browsing of the same underlying files).
+      - /srv/media/archive:/shares/archive
+    ports:
+      - "139:139"
+      - "445:445"
+    restart: unless-stopped
+    # UID/GID consistency gotcha, confirmed 2026-09-03: UID_barista above
+    # must match whatever UID the host's native nfs-kernel-server exports
+    # use, and what percolator/mochaPot's containers run as when mounting
+    # via NFS -- otherwise SMB and NFS clients touching the same files
+    # get permission mismatches. Not yet reconciled against percolator/
+    # mochaPot's own container UIDs -- do that when their archive-mount
+    # config is actually written.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run cellar's backup mirror nightly
+
+[Timer]
+# Nightly, off-peak -- adjust once real data volume is known and a
+# sensible off-peak window is picked; 03:00 is a placeholder, not
+# researched against this household's actual usage patterns.
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
