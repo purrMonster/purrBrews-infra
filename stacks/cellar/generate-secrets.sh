@@ -12,12 +12,13 @@
 # re-explained here to avoid drifting out of sync across five copies of
 # the same header.
 #
-# THIS FILE HAS NO APPS YET. cellar's own app list isn't built out — see
-# stacks/cellar/README.md and the initiation doc for what's actually
-# planned. Add one set_if_absent (or prompt_if_placeholder) call per
-# secret as each app gets built, same pattern as
-# stacks/silo/generate-secrets.sh's own per-app section — copy the helper
-# functions below as-is, they're generic.
+# Per-app secrets below cover vaultwarden, smb, komodo-periphery, and
+# caddy (added as each app was built, 2026-09-03 through 2026-09-04) --
+# see stacks/cellar/README.md for what each app actually does. Add one
+# set_if_absent (or prompt_if_placeholder) call per secret as any further
+# app gets built here, same pattern as stacks/silo/generate-secrets.sh's
+# own per-app section — copy the helper functions below as-is, they're
+# generic.
 #
 # Usage: run directly on cellar itself (never on roastery — per Section
 # 19.6, "no live coding on fleet nodes" is about not editing code/configs
@@ -103,6 +104,16 @@ set_if_absent "${DIR}/vaultwarden/secrets.env.local" "VAULTWARDEN_ADMIN_TOKEN" "
 
 log "smb/secrets.env.local"
 set_if_absent "${DIR}/smb/secrets.env.local" "SMB_BARISTA_PASSWORD" "$(rand 16)"
+
+log "komodo-periphery/secrets.env.local"
+# Real external value from silo's Komodo UI, not generatable here -- same
+# category as caddy's CLOUDFLARE_API_TOKEN just below. Only needed for
+# the first-ever connection (see komodo-periphery/docker-compose.yml's
+# own comment); once cellar exists as a Server in Komodo's UI, this can
+# stay a stale placeholder forever without breaking anything already
+# connected.
+prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
+  "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
 
 log "caddy/secrets.env.local"
 # Real external Cloudflare credential -- can't be randomly generated,

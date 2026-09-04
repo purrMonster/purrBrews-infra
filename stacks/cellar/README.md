@@ -136,6 +136,35 @@ matters**: whatever UID NFS exports use must match `smb/docker-compose.yml`'s
 SMB and NFS clients touching the same files get permission mismatches --
 not yet reconciled.
 
+### komodo-periphery
+
+Added 2026-09-04, so silo's Komodo Core can see and manage cellar's
+containers too -- no Core/Mongo here, just the agent (see
+`komodo-periphery/docker-compose.yml`'s own header comment for the full
+architecture note, same as every other node's Periphery agent).
+
+```sh
+sudo mkdir -p /srv/data/komodo-periphery/keys
+./compose.sh komodo-periphery up -d
+```
+
+**Two things need to be true before `up -d` actually connects, neither
+automatic**:
+
+1. `komodo-periphery/secrets.env.local`'s `PERIPHERY_ONBOARDING_KEY` needs
+   a real value from silo's Komodo UI (Settings -> the onboarding/servers
+   section) -- `generate-secrets.sh` prompts for it, same as caddy's
+   Cloudflare token.
+2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto
+   cellar first -- **this mechanism is unverified**, see
+   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
+   `scp` command and why it isn't asserted as confirmed-correct.
+
+Same outbound-only connection as every other node's Periphery (cellar ->
+silo on port 9120, no inbound rule needed on cellar) -- and same caveat
+as Komodo everywhere else in this fleet: whoever controls Core on silo
+has root-equivalent access to cellar once this is connected.
+
 ### backup-mirror
 
 **Not a container, deliberately.** Confirmed 2026-09-03: no well-
@@ -174,10 +203,11 @@ gap, revisit if disk usage becomes a real concern.
   cellar originally had a two-half SOPS+age bridge here instead —
   `decrypt-secrets.sh` plus a roastery-side `generate-secrets.ps1` —
   dropped fleet-wide for this simpler local-only approach; see that day's
-  runbook entry.) Currently has no per-app entries — nothing to generate
-  yet.
-- `local.env.example` — copy to `.env.local` and fill in. Minimal for now
-  (`CELLAR_LAN_IP`, `TZ`, `DOMAIN`) — grows as apps are added, same
+  runbook entry.) Covers vaultwarden, smb, komodo-periphery, and caddy as
+  of 2026-09-04 — see each app's own section above.
+- `local.env.example` — copy to `.env.local` and fill in. Has
+  `CELLAR_LAN_IP`, `SILO_LAN_IP` (added 2026-09-04 for komodo-periphery),
+  `TZ`, `DOMAIN` as of 2026-09-04 — grows further as apps are added, same
   as silo's did.
 - `.gitignore` — same rules as sieve's/silo's: `.env.local`,
   `*/secrets.env.local`, and rendered `*/config/*` (except the tracked
@@ -198,16 +228,12 @@ script itself is identical).
 
 ## Known gaps / things to double-check before relying on this
 
-- The deploy-order guess above (cellar positioned after silo, before/after
-  whichever of percolator/cellar/mochaPot/ristretto) is unverified against
-  the initiation doc.
-- No apps exist here yet — this whole directory is untested scaffolding,
-  copied from a working silo setup but never itself run through
-  `setup-secrets.sh` or `compose.sh` against a real host.
-- If cellar will run a Komodo Periphery agent (so silo's Komodo Core can
-  manage it), see `stacks/_templates/komodo-periphery/docker-compose.yml`
-  — copy it into an app subdirectory here once cellar exists and fill in
-  its `REPLACE_ME` values.
+- **Komodo Periphery's `PERIPHERY_CORE_PUBLIC_KEYS` provisioning is
+  unverified** -- the `scp core.pub from silo` mechanism in
+  `komodo-periphery/docker-compose.yml`'s own comment is a best guess
+  from how the same-host case works, not confirmed against Komodo's own
+  docs for a cross-host setup specifically. Confirm on first real
+  bring-up and correct that comment if it turns out to work differently.
 - **Vaultwarden has zero fallback access as of 2026-09-04** -- its old
   `http://<CELLAR_LAN_IP>:8000` is gone, and it's only reachable through
   `caddy` now. Until `caddy` is up AND sieve's Pi-hole has the

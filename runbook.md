@@ -1268,3 +1268,198 @@ this actually runs.
   to preview, then for real -- this is now the actual blocker for
   reaching komodo/scrutiny/netalertx/homepage/speedtest.${DOMAIN} and
   vault.${DOMAIN}, not a nice-to-have.
+
+## 2026-09-04 (cont.) — silo incident: "nothing resolves," root-caused through three layers, recovered via full container wipe
+
+User Penguin reported `homepage.whiskertreat.fyi` not resolving, shortly
+after the `silo_net` rework above. First checked the DNS layer itself --
+ruled out fast: the user's own `nslookup homepage.whiskertreat.fyi` (no
+explicit server) resolved correctly to silo's LAN IP, with the deliberate
+`::` AAAA-block line also present, confirming `pihole-dns-bootstrap.sh`
+itself had already been run successfully and was working as designed.
+
+Then "none of them are resolving," with a guess that Traefik's ufw rule
+might be blocking it. Explained this was unlikely given the Docker-NAT-
+bypasses-ufw finding confirmed earlier tonight -- that makes ufw too
+*permissive*, not a blocker -- and suggested a more likely cause instead:
+`render-configs.sh` never re-run on silo after `git pull`, which would
+leave Traefik's `dynamic.yml` bind-mount source missing (a classic
+Docker missing-bind-mount-becomes-an-empty-directory failure mode).
+
+Actual root cause, disclosed directly by User Penguin: **Traefik itself
+had simply never been started on silo at all.** After starting it, a
+*second* root cause showed up in `docker ps` output: Scrutiny/Speedtest-
+tracker/Homepage were all still running their pre-`silo_net`-rework
+containers -- old published ports, old uptimes (26h/28h/3 days).
+Confirmed why: editing a compose file never touches an already-running
+container: only `docker compose up -d`, when it detects config drift,
+recreates one. Traefik (freshly created, correctly on `silo_net`) had no
+way to resolve any of their container names, because none of them had
+actually been recreated onto that network yet.
+
+A batched `up -d` recreate across all four apps at once hit a `WARN`
+about Homepage's old network label (`homepage_default` vs the new
+`silo_net` override -- harmless, informational) and appeared to hang at
+"Container homepage Recreate 4.5s" before being interrupted with Ctrl-C.
+Explained the WARN as benign and the hang as most likely just Docker's
+default ~10s SIGTERM grace period being cut off too early by the
+interrupt -- recommended running recreates one at a time instead of
+batched, and checking `docker ps -a` first for actual current state.
+
+User Penguin then took the direct route: **deleted every container on
+silo and pruned Docker entirely.** Confirmed this was actually a clean,
+safe recovery path for exactly the stale-container problem being chased
+-- `/srv/data/*` is a plain host bind mount, completely outside Docker's
+container/image/network/volume pruning scope, so no app data was at
+risk -- and `silo_net` itself (pruned as "unused") would be idempotently
+recreated by `compose.sh` on the very next `up -d` for any app, no
+manual fix needed. Gave a full ordered bring-up sequence for every app
+on the node, since the prune meant literally everything was down, not
+just the four originally being debugged: unbound -> homepage ->
+netalertx -> speedtest-tracker -> komodo -> scrutiny -> diun -> traefik.
+
+User Penguin ran the full recovery sequence. 9 of 10 containers came up
+clean on the first try: unbound, homepage, netalertx, speedtest-tracker,
+komodo-mongo/core/periphery, diun + its socket-proxy, traefik. One
+failure: **Scrutiny** -- `WARN: The "SCRUTINY_DISK_DEVICE" variable is
+not set. Defaulting to a blank string.` followed by `error gathering
+device information while adding custom device "": no such file or
+directory`.
+
+Root cause: not a bug in the compose file itself, but a repeat of a gap
+already hit and documented twice before this same night (`SILO_LAN_
+INTERFACE`, `SILO_LAN_IP`/`CELLAR_LAN_IP`) -- a new key added to
+`local.env.example` never automatically lands in a node's already-
+created, gitignored `.env.local`; that's a manual step, easy to miss.
+Scrutiny's `devices:` entry moved from a hardcoded `/dev/sda` to
+`${SCRUTINY_DISK_DEVICE}` on 2026-09-03, but Scrutiny's container was
+never actually recreated after that change until tonight's recovery --
+that's the entire reason the earlier stale-container incident happened
+in the first place -- so tonight was the first time this exact code path
+ever ran for real, and it surfaced that silo's live `.env.local` never
+got the manual addition. Fix: add the real device path (confirmed
+2026-09-02 via `lsblk -d -o NAME,TYPE,SIZE,MODEL` -- single disk,
+`/dev/sda`, Seagate BarraCuda `ST1000LM035-1RK172` -- worth reconfirming
+if silo's disks have changed since) to silo's live `.env.local` by hand,
+then `sudo ./compose.sh scrutiny up -d` again.
+
+## 2026-09-04 (cont.) — cellar: Komodo Periphery agent + README cleanup
+
+While silo's recovery was in progress, User Penguin asked to continue
+cellar's build in parallel. Offered three options (native NFS setup,
+Komodo Periphery agent, cleaning up cellar's README's stale content);
+User Penguin picked the latter two, explicitly deferring NFS.
+
+Built `stacks/cellar/komodo-periphery/docker-compose.yml` from
+`stacks/_templates/komodo-periphery/docker-compose.yml`, filled in for
+real: pinned to `ghcr.io/moghtech/komodo-periphery:2.3.2`, confirmed
+matching silo's own live `komodo-core`/`komodo-periphery` pins by
+grepping `stacks/silo/komodo/docker-compose.yml` directly rather than
+trusting the template's own comment. `PERIPHERY_CONNECT_AS: cellar` set
+literally (not left `REPLACE_ME`). Bind-mounted
+`/srv/data/komodo-periphery/keys:/config/keys`, not the template's named
+`keys:` volume -- matches this fleet's established `/srv/data/<app>`
+convention, same reasoning applied to every other app on cellar/silo.
+
+Flagged rather than asserted: how `PERIPHERY_CORE_PUBLIC_KEYS`
+(`file:/config/keys/core.pub`) actually gets populated for a *cross-host*
+Periphery agent. On silo itself, Core writes its own public key to
+`/srv/data/komodo/keys/core.pub` and same-host Periphery reads it
+straight off the shared bind mount -- cellar has no local Core to do
+that. Best-guess mechanism documented in the compose file's own comment
+(`scp` that exact file from silo to cellar) but explicitly marked
+unverified -- Komodo's own docs cover the same-host case clearly and the
+multi-host case only by inference from the env var's shape, not
+confirmed verbatim. Added this as cellar's Known-gaps bullet, to verify
+on first real bring-up.
+
+Added `SILO_LAN_IP` to `stacks/cellar/local.env.example` (needed for
+`PERIPHERY_CORE_ADDRESS: ws://${SILO_LAN_IP}:9120`) and wired
+`PERIPHERY_ONBOARDING_KEY` into `generate-secrets.sh` via
+`prompt_if_placeholder`, same category as `caddy`'s Cloudflare token --
+functionally tested in a throwaway copy, confirmed both keys write
+correctly and the script stays idempotent across two runs.
+
+Cleaned up `stacks/cellar/README.md`'s two stale Known-gaps bullets (the
+unverified deploy-order guess, and "no apps exist here yet -- untested
+scaffolding" -- both false now given everything built on cellar
+tonight), replacing the latter with the real, still-open
+`PERIPHERY_CORE_PUBLIC_KEYS` provisioning gap above. Also fixed two other
+stale spots caught along the way: the `generate-secrets.sh` bullet under
+"What's here now" still said "currently has no per-app entries," and
+`local.env.example`'s bullet still said "minimal for now (CELLAR_LAN_IP,
+TZ, DOMAIN)" -- both predate tonight's builds. Added a full
+`### komodo-periphery` bring-up section alongside the others.
+
+### Pending, this entry
+
+- **Confirm `PERIPHERY_CORE_PUBLIC_KEYS`'s cross-host provisioning
+  actually works** the way documented (`scp core.pub` from silo) on
+  cellar's first real bring-up -- correct the compose file's comment
+  once it's known one way or the other, don't leave it asserted as fact
+  if it turns out to work differently.
+- **Get a real `PERIPHERY_ONBOARDING_KEY`** from silo's Komodo UI
+  (Settings -> the onboarding/servers section) once silo's Komodo is
+  confirmed back up from the incident above -- can't be done until then.
+- **Fix Scrutiny on silo**: add `SCRUTINY_DISK_DEVICE=/dev/sda` (confirm
+  still correct via `lsblk`) to silo's live `.env.local` by hand, then
+  `sudo ./compose.sh scrutiny up -d` -- see the entry just above for the
+  full diagnosis. The other 9 containers came up clean.
+- Once Scrutiny's fixed: confirm all five `*.${DOMAIN}` hostnames
+  actually resolve (needs `pihole-dns-bootstrap.sh` run for real, still
+  pending from the entry above) and route through Authelia correctly --
+  a real browser login through each, not just a curl/nslookup check.
+- `komodo-periphery` itself hasn't been brought up on cellar yet --
+  blocked on the two items above.
+
+## 2026-09-04 (cont.) — real root cause found: Authelia's ForwardAuth address was never actually reachable cross-host
+
+With the `dynamic.yml` stale-mount theory ruled out (confirmed via `docker
+exec traefik ls -la /etc/traefik/dynamic/` -- a real 6411-byte file, not a
+phantom directory) and `curl -H "Host: homepage.whiskertreat.fyi"
+http://localhost/` run directly on silo returning an immediate, empty
+`HTTP/1.1 500` (not a hang, not a 502), the fault pointed at the one thing
+in the request pipeline that makes an outbound call: the `authelia`
+ForwardAuth middleware.
+
+Checked `stacks/sieve/authelia/docker-compose.yml` directly and found it:
+Authelia has no `ports:` mapping at all -- it only joins sieve's internal
+`sieve_proxy` Docker network, reachable by container name to sieve's own
+Traefik (`traefik.docker.network=sieve_proxy` label) and nothing else.
+`http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth` -- the address every
+node's `dynamic.yml.template` has used since this pattern was first
+written -- was never actually reachable from another physical host. It
+just hadn't been caught, because silo's Traefik was the first live test
+of it anywhere in this fleet (percolator's identical copy is still
+dormant; mochaPot only has a comment referencing the pattern so far).
+
+Fixed both templates (`stacks/silo/` and `stacks/percolator/traefik/
+config/dynamic.yml.template`) to route through sieve's own Traefik
+instead -- `https://authelia.${DOMAIN}/api/authz/forward-auth` -- the
+same path browsers already use to reach Authelia's login portal (sieve's
+Traefik publishes 443 with a real ACME cert and already routes
+`authelia.${DOMAIN}` to the Authelia container). Reuses infrastructure
+already proven working rather than opening a second raw port on sieve,
+which would've meant another Docker-NAT-bypasses-ufw exposure like
+Komodo's 9120 exception. Depends on `authelia.${DOMAIN}` actually
+resolving from silo/percolator's own DNS (should, since it's one of
+sieve's original four Pi-hole-bootstrapped hostnames) -- not
+independently re-confirmed, flagged rather than asserted. Validated both
+rendered templates with a throwaway `envsubst` + PyYAML parse before
+handing off; not yet applied on silo itself.
+
+### Pending, this entry
+
+- **On silo**: `git pull`, `./render-configs.sh`,
+  `sudo ./compose.sh traefik down && sudo ./compose.sh traefik up -d`
+  (a fresh recreate, not just a restart -- matches the discipline this
+  same incident already taught), then re-test with the same
+  `curl -H "Host: homepage.whiskertreat.fyi" http://localhost/` -- expect
+  a real response now, not a 500.
+- If it still 500s: check whether silo's own DNS resolves
+  `authelia.whiskertreat.fyi` at all (`nslookup authelia.whiskertreat.fyi`
+  on silo) -- if that's the gap instead, the fix's premise (silo already
+  points at sieve's Pi-hole for DNS) needs revisiting.
+- Same fix still needs applying to percolator whenever its Traefik
+  actually gets brought up for the first time -- already done in the
+  template, just noting it's untested there too.

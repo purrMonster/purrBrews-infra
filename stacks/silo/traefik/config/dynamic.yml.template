@@ -45,11 +45,32 @@ http:
   middlewares:
     authelia:
       forwardAuth:
-        # Same address every other node's Traefik uses -- Authelia runs on
-        # sieve, a different physical host, so this has to be a real
-        # routable LAN address, not a Docker network alias. Confirm it
-        # matches sieve's own SIEVE_LAN_IP if that's ever changed.
-        address: "http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth"
+        # FIXED 2026-09-04, after silo's Traefik went live for real and
+        # this returned an immediate empty 500 on every request: the
+        # previous address, http://${SIEVE_LAN_IP}:9091/..., pointed at a
+        # port sieve's Authelia never actually publishes to its own host
+        # at all (see stacks/sieve/authelia/docker-compose.yml -- it only
+        # joins the internal sieve_proxy Docker network, reachable by
+        # container name to sieve's own Traefik, nothing more). That
+        # address had never been exercised anywhere in this fleet before
+        # tonight -- percolator's identical copy is still dormant, never
+        # brought up -- so the bug went unnoticed since the template was
+        # first written.
+        #
+        # Fixed by routing through sieve's own Traefik instead, the same
+        # path browsers already use to reach Authelia's login portal:
+        # sieve's Traefik publishes 443 with a real ACME cert and already
+        # routes authelia.${DOMAIN} to the Authelia container (see
+        # stacks/sieve/authelia/docker-compose.yml's own Traefik labels).
+        # Reuses infrastructure already proven working rather than
+        # opening a second raw port on sieve (which would've meant yet
+        # another Docker-NAT-bypasses-ufw exposure, same category as
+        # Komodo's 9120 exception on silo). Requires authelia.${DOMAIN} to
+        # actually resolve from silo -- true as long as silo's own DNS
+        # points at sieve's Pi-hole, same as every other *.${DOMAIN}
+        # hostname this fleet depends on; not independently re-confirmed
+        # here, flagging rather than asserting.
+        address: "https://authelia.${DOMAIN}/api/authz/forward-auth"
         trustForwardHeader: true
         authResponseHeaders:
           - Remote-User
