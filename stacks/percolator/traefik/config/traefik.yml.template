@@ -1,0 +1,66 @@
+## Rendered by ../../render-configs.sh from this .template -- edit the
+## .template, never the rendered traefik.yml (it gets overwritten).
+##
+## Added 2026-09-04, replacing the original plain-HTTP `command:` block
+## in ../docker-compose.yml before this was ever brought up for real --
+## caught via silo's identical "lite" pattern (no TLS at all) hitting a
+## hard wall live: Authelia refuses to issue a session cookie for a
+## ForwardAuth-protected target unless its scheme is https/wss, no
+## config flag to relax it (`error="Target URL '...' has an insecure
+## scheme 'http'..."`, confirmed via Authelia's own logs on sieve). Fixed
+## here pre-emptively, before percolator's apps ever get routed through
+## this and hit the same thing. See the runbook's 2026-09-04 entries and
+## stacks/silo/traefik/config/traefik.yml.template's own header for the
+## full story -- this file is adapted from silo's fixed version.
+##
+## Real cert via Cloudflare DNS-01, same as silo's own Traefik and
+## sieve's -- DNS-01 needs no inbound port-80 reachability, which matters
+## since percolator's own `*.${DOMAIN}` hostnames (once any exist) would
+## be LAN-only with no public A record, same reasoning as silo's.
+##
+## Keeps providers.docker (unlike silo, which only uses the file
+## provider) -- percolator's future apps (nextcloud/paperless/
+## home-assistant) are meant to get routed via traefik.enable=true
+## labels on their own compose files, not by hand-writing router entries
+## here. IMPORTANT for whoever wires those up later: use
+## `traefik.http.routers.<name>.entrypoints=websecure`, not `web` --
+## `web` is redirect-only now, matching this file's entryPoints below.
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: cloudflare
+
+providers:
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: percolator_net
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  cloudflare:
+    acme:
+      email: admin@${DOMAIN}
+      storage: /letsencrypt/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+api:
+  dashboard: false
+
+log:
+  level: INFO

@@ -23,13 +23,12 @@
 # generated or hand-edited, is never touched. Re-running this later (e.g.
 # once a new silo app needs a new secret) is always safe.
 #
-# None of silo's current apps need a value that can't be randomly generated
-# (no external API token, no Cloudflare-style account credential), so
-# nothing here prompts interactively today — but prompt_if_placeholder is
-# kept below anyway, copied verbatim from sieve's own script, so the next
-# app that does need one (an API key, etc.) can use it without inventing
-# the pattern again. See sieve's generate-secrets.sh for the fuller comment
-# on why prompts skip cleanly when stdin isn't a real terminal.
+# traefik/secrets.env.local's CF_DNS_API_TOKEN (added 2026-09-04) is the
+# one value here that can't be randomly generated — a real external
+# Cloudflare credential, prompted via prompt_if_placeholder rather than
+# set_if_absent, same pattern as cellar's caddy/secrets.env.local. See
+# sieve's generate-secrets.sh for the fuller comment on why prompts skip
+# cleanly when stdin isn't a real terminal.
 #
 set -euo pipefail
 
@@ -136,6 +135,21 @@ set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_DATABASE_PASSWORD" "$(ra
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_JWT_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_WEBHOOK_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_INIT_ADMIN_PASSWORD" "$(rand 16)"
+
+log "traefik/secrets.env.local"
+# Added 2026-09-04, alongside giving silo's Traefik real TLS via
+# Cloudflare DNS-01 (see traefik/config/traefik.yml.template's own
+# comment for why plain HTTP turned out to be a dead end). Real external
+# credential, can't be randomly generated -- same category and same
+# required scope (Zone:DNS:Edit on ${DOMAIN}'s zone) as sieve's own
+# CF_DNS_API_TOKEN and cellar's caddy/secrets.env.local's
+# CLOUDFLARE_API_TOKEN (different var name there, same kind of value --
+# Traefik's lego library expects CF_DNS_API_TOKEN specifically). Safe to
+# reuse the exact same real token value across all three if it already
+# has that scope -- Cloudflare tokens aren't tied to one server, only to
+# a zone and a permission set.
+prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
+  "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
 
 # scrutiny, diun — no secrets needed. scrutiny has no auth at all to
 # protect (see stacks/silo/README.md's Known gaps); diun has no web UI or

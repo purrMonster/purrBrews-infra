@@ -413,9 +413,22 @@ even its own Traefik dashboard and Pi-hole's admin UI behind Authelia,
 while silo's Komodo (effective root on every node running a Periphery
 agent, see its own section above) sat wide open on a raw port. This adds
 the same ForwardAuth gate for Komodo, Scrutiny, NetAlertX, Homepage, and
-Speedtest-tracker. Lite pattern, same as percolator's/mochaPot's own
-Traefik instances — plain HTTP, no ACME/TLS, file-provider routing for
-the router/middleware definitions.
+Speedtest-tracker.
+
+**Real TLS via Cloudflare DNS-01, not the original plain-HTTP "lite"
+pattern.** Built plain-HTTP first, same as percolator's/mochaPot's own
+Traefik instances -- turned out to be a dead end, found live on first
+real bring-up: Authelia hard-requires the protected URL's scheme to be
+https/wss before it'll issue a session cookie at all, no config flag to
+relax it (`error="Target URL '...' has an insecure scheme 'http'..."`,
+confirmed via Authelia's own logs on sieve). Switched to a static
+`traefik.yml` with a `cloudflare` ACME resolver (DNS-01 -- needs no
+inbound port-80 reachability, so the "these hostnames have no public DNS
+record" fact never actually blocked this). Needs
+`traefik/secrets.env.local`'s `CF_DNS_API_TOKEN`, prompted by
+`generate-secrets.sh` -- same required scope (`Zone:DNS:Edit` on
+`${DOMAIN}`'s zone) as sieve's and cellar's own Cloudflare tokens, safe
+to reuse the same real value.
 
 Backends are reached over a new `silo_net` Docker network (container
 DNS) for Scrutiny/Homepage/Speedtest-tracker/Komodo, same day this was
@@ -432,9 +445,23 @@ from other physical hosts' future Periphery agents, see its own section)
 deliberately accepted, not fixed. NetAlertX is unaffected either way —
 `network_mode: host` was never subject to this issue in the first place.
 
+**Also required, easy to miss**: Authelia's own ForwardAuth endpoint has
+to be reachable directly from silo, on sieve's own host --
+`stacks/sieve/authelia/docker-compose.yml` now publishes `9091:9091` for
+exactly this (added 2026-09-04, same category of cross-host exception as
+Komodo's 9120 here, see that file's own comment). Routing this call
+through sieve's public Traefik instead was tried first and doesn't work
+-- ForwardAuth depends on `X-Forwarded-Method`/`Proto`/`Host`/`Uri`
+describing the original request, and a second Traefik hop in between
+drops them. This has to be a direct hop; confirm it's actually up on
+sieve before silo's Traefik will gate anything successfully.
+
 ```sh
+sudo mkdir -p /srv/data/traefik/letsencrypt
 sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
+sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp
 ./compose.sh traefik up -d
+docker logs traefik --tail 30   # look for a successful cert issuance, not just a clean startup
 ```
 
 One thing still needs to happen before this is actually reachable by
@@ -449,9 +476,10 @@ for this: it's Pi-hole's upstream resolver, access-restricted to accept
 queries from sieve alone (see `unbound/local.env.example`'s own comment)
 — not something client devices query directly. Until the records exist,
 Scrutiny/Homepage/Speedtest-tracker have **no way to be reached at all**
-(their raw ports are gone) — test with:
+(their raw ports are gone) — test with (note `-k`, needed until DNS
+exists since the cert is issued for the real hostname, not the raw IP):
 ```sh
-curl -H "Host: komodo.${DOMAIN}" http://<SILO_LAN_IP>/
+curl -k -H "Host: komodo.${DOMAIN}" https://<SILO_LAN_IP>/
 ```
 
 ## Known gaps / things to double-check before relying on this
@@ -570,3 +598,15 @@ curl -H "Host: komodo.${DOMAIN}" http://<SILO_LAN_IP>/
   would've been under the original parallel-path design; it's a full
   outage for those three until the DNS records are added. Add them
   before relying on this being "done."
+- **This node's Traefik depends on sieve's Authelia publishing port 9091
+  to its own host** (added 2026-09-04, same day as the TLS fix above) --
+  if that's ever reverted on sieve for any reason, every app behind this
+  Traefik stops authenticating (ForwardAuth calls fail), even though the
+  apps themselves and Traefik's own TLS keep working fine. Not something
+  this directory can fix or detect on its own; see
+  `stacks/sieve/authelia/docker-compose.yml`'s own comment.
+- **Traefik's ACME state (`/srv/data/traefik/letsencrypt/acme.json`) has
+  no backup of its own** -- losing it means re-issuing all five certs
+  from scratch on next bring-up (Let's Encrypt rate-limits repeated
+  issuance for the same names, so this is an annoyance, not a disaster,
+  but worth knowing before wiping `/srv/data` casually).

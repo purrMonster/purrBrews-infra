@@ -26,9 +26,8 @@
 ##
 ## These Host() rules need komodo.${DOMAIN} / scrutiny.${DOMAIN} / etc.
 ## to actually resolve to ${SILO_LAN_IP} on the LAN. No public DNS record
-## should exist for these (this is plain HTTP, no ACME, LAN-only, unlike
-## sieve's real subdomains) -- add them as Local DNS Records in sieve's
-## own Pi-hole admin UI instead (Settings -> Local DNS Records, or
+## should exist for these -- add them as Local DNS Records in sieve's own
+## Pi-hole admin UI instead (Settings -> Local DNS Records, or
 ## /etc/pihole/custom.list directly), pointing each hostname at
 ## ${SILO_LAN_IP}. Confirmed 2026-09-04 this is the right layer, not
 ## silo's own Unbound -- Unbound here is Pi-hole's upstream recursive
@@ -37,9 +36,19 @@
 ## query directly. Pi-hole is the actual household resolver (README:
 ## "everything else depends on local name resolution", DHCP meant to be
 ## enabled there later) -- that's where local overrides belong. Not added
-## here since it's a change on sieve, not this directory. Until it's
-## added, test with:
-##   curl -H "Host: komodo.${DOMAIN}" http://${SILO_LAN_IP}/
+## here since it's a change on sieve, not this directory.
+##
+## Real TLS now (added 2026-09-04, see ../config/traefik.yml.template's
+## own header for the full story) -- despite there being no public DNS
+## record for these hostnames, they get real, publicly-trusted certs via
+## Cloudflare DNS-01 (proves zone control via a TXT record, doesn't care
+## what the A record says or whether one exists at all). This isn't
+## optional polish: Authelia hard-requires an https/wss target URL before
+## it'll issue a session cookie, confirmed the hard way when this was
+## still plain HTTP -- every router below needs entrypoints: [websecure],
+## not [web]. Test with (note https, and -k until DNS exists since the
+## cert's issued for the real hostname, not ${SILO_LAN_IP}):
+##   curl -k -H "Host: komodo.${DOMAIN}" https://${SILO_LAN_IP}/
 
 http:
   middlewares:
@@ -80,12 +89,12 @@ http:
       # deployed to (see komodo/docker-compose.yml's own comment).
       # Whoever controls this UI effectively has root on the fleet.
       rule: "Host(`komodo.${DOMAIN}`)"
-      entrypoints: [web]
+      entrypoints: [websecure]
       service: komodo
       middlewares: [authelia]
     scrutiny:
       rule: "Host(`scrutiny.${DOMAIN}`)"
-      entrypoints: [web]
+      entrypoints: [websecure]
       service: scrutiny
       middlewares: [authelia]
     netalertx:
@@ -95,7 +104,7 @@ http:
       # replacement for it. Kept for consistency: every silo UI gets the
       # same treatment rather than picking and choosing.
       rule: "Host(`netalertx.${DOMAIN}`)"
-      entrypoints: [web]
+      entrypoints: [websecure]
       service: netalertx
       middlewares: [authelia]
     homepage:
@@ -103,12 +112,12 @@ http:
       # too, not just the apps it links to, since it's reachable on its
       # own raw port regardless.
       rule: "Host(`homepage.${DOMAIN}`)"
-      entrypoints: [web]
+      entrypoints: [websecure]
       service: homepage
       middlewares: [authelia]
     speedtest-tracker:
       rule: "Host(`speedtest.${DOMAIN}`)"
-      entrypoints: [web]
+      entrypoints: [websecure]
       service: speedtest-tracker
       middlewares: [authelia]
 

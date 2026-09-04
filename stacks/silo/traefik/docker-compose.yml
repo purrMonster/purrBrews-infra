@@ -2,24 +2,23 @@ services:
   traefik:
     image: traefik:v3.7.12
     container_name: traefik
-    command:
-      - "--providers.file.directory=/etc/traefik/dynamic"
-      - "--providers.file.watch=true"
-      - "--entrypoints.web.address=:80"
-      - "--api.dashboard=false"
-      # No providers.docker here -- deliberately kept on the file
-      # provider even after silo_net was added 2026-09-04, since
-      # dynamic.yml.template already existed and per-service docker
-      # labels would mean touching every app's compose file a second
-      # time for no real benefit at this app count. Routes via container
-      # DNS on silo_net now (changed same day from ${SILO_LAN_IP}:
-      # <published-port> -- see this file's own closing comment), file
-      # provider just supplies the router/service definitions instead of
-      # Docker labels supplying them.
+    # Switched 2026-09-04 from an inline `command:` block (plain HTTP
+    # only) to a static traefik.yml -- needed real TLS config
+    # (certificatesResolvers.dnsChallenge is deeply nested, awkward as
+    # CLI flags), see traefik.yml.template's own header comment for why
+    # plain HTTP turned out to be a dead end. No providers.docker here,
+    # deliberately -- routes via container DNS on silo_net + the file
+    # provider's router/service definitions, same reasoning as before,
+    # unaffected by the TLS change.
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
     ports:
       - "80:80"
+      - "443:443"
     volumes:
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - /srv/data/traefik/letsencrypt:/letsencrypt
     networks:
       - silo_net
     restart: unless-stopped

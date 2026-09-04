@@ -167,18 +167,41 @@ confirmed this is the right default for a homelab host running several
 unrelated stacks on `percolator_net`; apps opt in per-container with
 `traefik.enable=true` (not yet added to nextcloud/paperless/homeassistant's
 own compose files — do that once Traefik itself is confirmed healthy, to
-avoid breaking their current direct-port access first). ForwardAuth calls
-sieve's Authelia directly over the LAN
+avoid breaking their current direct-port access first). **When you do,
+use `traefik.http.routers.<name>.entrypoints=websecure`, not `web`** —
+see below for why.
+
+ForwardAuth calls sieve's Authelia directly over the LAN
 (`http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth`, confirmed via
 Authelia's own current Traefik integration docs) — `SIEVE_LAN_IP` needs
 to be set in `.env.local` before `render-configs.sh` runs, since Docker
 service discovery can't reach a different physical host by container
-name. No ACME/TLS — confirmed there's no official Traefik path for a
-purely internal-LAN instance with no public DNS; plain HTTP for now.
+name. This has to be a direct hop to Authelia's own port, not routed
+through sieve's public Traefik -- confirmed the hard way on silo's
+identical setup 2026-09-04 (Authelia's own logs: `error="header
+'X-Forwarded-Method' is empty"` -- a second Traefik hop drops that
+header). Also needs sieve's Authelia to actually publish 9091 to its own
+host, which it now does for exactly this reason -- see
+`stacks/sieve/authelia/docker-compose.yml`'s own comment.
+
+**Real TLS via Cloudflare DNS-01, not plain HTTP** — the original
+2026-09-03 decision here ("no ACME/TLS, this fleet's LAN is already the
+trust boundary") turned out to be wrong, corrected 2026-09-04 before this
+was ever brought up for real: found live on silo's identical pattern
+that Authelia hard-requires an https/wss target URL before it'll issue a
+session cookie, no config flag to relax it. DNS-01 needs no inbound
+port-80 reachability, so "no public DNS" was never actually the blocker
+it was assumed to be. Needs `traefik/secrets.env.local`'s
+`CF_DNS_API_TOKEN`, prompted by `generate-secrets.sh` — same required
+scope (`Zone:DNS:Edit` on `${DOMAIN}`'s zone) as sieve's/silo's/cellar's
+own Cloudflare tokens, safe to reuse the same real value.
 
 ```sh
+sudo mkdir -p /srv/data/traefik/letsencrypt
 sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
+sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp
 ./compose.sh traefik up -d
+docker logs traefik --tail 30   # look for a successful cert issuance, not just a clean startup
 ```
 
 ## What's here now
@@ -198,8 +221,9 @@ sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
   percolator originally had a two-half SOPS+age bridge here instead —
   `decrypt-secrets.sh` plus a roastery-side `generate-secrets.ps1` —
   dropped fleet-wide for this simpler local-only approach; see that day's
-  runbook entry.) Currently has no per-app entries — nothing to generate
-  yet.
+  runbook entry.) Covers `traefik/secrets.env.local`'s `CF_DNS_API_TOKEN`
+  as of 2026-09-04 (see traefik's own section above) — no other app has
+  built-out secrets yet.
 - `local.env.example` — copy to `.env.local` and fill in. Minimal for now
   (`PERCOLATOR_LAN_IP`, `TZ`, `DOMAIN`) — grows as apps are added, same
   as silo's did.
@@ -226,9 +250,14 @@ script itself is identical).
   run against real hardware — percolator itself doesn't exist as
   hardware/a VM yet as of 2026-09-03. First real test of `setup-secrets.sh`
   and `./compose.sh postgres up -d` happens once it does.
-- homeassistant/, nextcloud/, paperless/, traefik/ have no compose files
-  yet — research is done (see the runbook's 2026-09-03 entry), writing
-  them is next.
+- homeassistant/, nextcloud/, paperless/ have no compose files yet —
+  research is done (see the runbook's 2026-09-03 entry), writing them is
+  next. `traefik/` does have one now (2026-09-04, including the
+  Cloudflare DNS-01 TLS fix — see its own section above), but it's
+  entirely untested: percolator doesn't exist as hardware/a VM yet, so
+  nothing in this file has ever actually been brought up. Confirm the
+  cert issuance and the Authelia ForwardAuth hop both actually work on
+  percolator's first real bring-up, not just on silo's.
 - The Immich postgres image (`ghcr.io/immich-app/postgres`) carries ~90
   flagged CVEs in its OS layer per a community scan (immich-app/immich
   discussion #23211) that its maintainer has declined to remediate —

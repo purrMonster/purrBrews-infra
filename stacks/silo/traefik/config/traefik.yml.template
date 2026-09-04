@@ -1,0 +1,64 @@
+## Rendered by ../../render-configs.sh from this .template -- edit the
+## .template, never the rendered traefik.yml (it gets overwritten).
+##
+## Added 2026-09-04, replacing the original plain-HTTP `command:` block
+## in ../docker-compose.yml -- that "lite" pattern (no TLS at all, same
+## as percolator's/mochaPot's own Traefik instances) turned out to be a
+## dead end for anything gated by Authelia: confirmed live, via
+## Authelia's own logs on sieve, that it hard-requires the protected
+## URL's scheme to be https/wss before it'll issue a session cookie, no
+## config flag to relax it (`error="Target URL '...' has an insecure
+## scheme 'http'..."`). Every app behind this Traefik would have hit the
+## same wall, not just the one being tested when this was found -- see
+## the runbook's 2026-09-04 entries for the full multi-round diagnosis.
+##
+## Real cert via Cloudflare DNS-01, same pattern as sieve's own Traefik
+## (this file is adapted from stacks/sieve/traefik/config/
+## traefik.yml.template) and cellar's Caddy -- DNS-01 needs no inbound
+## port-80 reachability at all, which matters here since these
+## `*.${DOMAIN}` hostnames are deliberately LAN-only with no public A
+## record (see ../dynamic.yml.template's own header comment). A
+## publicly-trusted cert still gets issued even with no public DNS
+## record pointing anywhere real -- DNS-01 only proves control of the
+## zone via a TXT record, it doesn't care what the A record says.
+##
+## No `providers.docker` block here, deliberately -- unlike sieve's own
+## Traefik (which discovers labeled containers), silo's apps aren't
+## routed via Docker labels, only the file provider below (see
+## ../docker-compose.yml's own comment on why: routes to backends by
+## container name on silo_net instead).
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: cloudflare
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  cloudflare:
+    acme:
+      email: admin@${DOMAIN}
+      storage: /letsencrypt/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+api:
+  dashboard: false
+
+log:
+  level: INFO

@@ -120,12 +120,24 @@ log "paperless/secrets.env.local"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_ADMIN_PASSWORD" "$(rand 16)"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_SECRET_KEY" "$(rand 32)"
 
+log "traefik/secrets.env.local"
+# Added 2026-09-04, alongside pre-emptively giving percolator's Traefik
+# real TLS via Cloudflare DNS-01 (before it was ever brought up for the
+# first time -- see traefik/config/traefik.yml.template's own comment
+# for why the original plain-HTTP decision was wrong). Real external
+# credential, can't be randomly generated -- same required scope
+# (Zone:DNS:Edit on ${DOMAIN}'s zone) as sieve's/silo's/cellar's own
+# Cloudflare tokens; safe to reuse the exact same real token value if it
+# already has that scope, Cloudflare tokens aren't tied to one server.
+prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
+  "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
+
 # homeassistant/ has no secrets.env.local -- no compose-level DB config
 # exists for HA (see homeassistant/docker-compose.yml's own comment: the
 # recorder DB is configuration.yaml-only, provisioned manually after first
-# boot, not through this script). traefik/ also has none -- ForwardAuth's
-# only per-node value is SIEVE_LAN_IP, which lives in .env.local (not a
-# secret) since render-configs.sh needs it at template-render time, not
+# boot, not through this script). ForwardAuth's only per-node value is
+# SIEVE_LAN_IP, which lives in .env.local (not a secret) since
+# render-configs.sh needs it at template-render time, not
 # generate-secrets.sh.
 # --------------------------------------------------------------------------
 

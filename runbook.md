@@ -1514,3 +1514,90 @@ or silo.
 - Same sequence (once it's actually brought up for the first time)
   applies to percolator later -- its template has the same corrected
   address now, untested there too.
+
+## 2026-09-04 (cont.) — silo's Traefik needed real TLS: Authelia hard-requires it, no way around it
+
+With sieve's Authelia now reachable directly (previous entry), the same
+400 test came back as a *new*, different error, confirmed via Authelia's
+own logs: `error="Target URL 'http://homepage.whiskertreat.fyi/' has an
+insecure scheme 'http', only the 'https' and 'wss' schemes are supported
+so session cookies can be transmitted securely"`.
+
+Not a config typo this time -- a real architectural gap. Silo's Traefik
+was deliberately built plain-HTTP-only ("lite pattern", no ACME/TLS,
+same as percolator's/mochaPot's own Traefik instances) on the reasoning
+that these `*.${DOMAIN}` hostnames are LAN-only with no public DNS
+record, so ACME wasn't assumed to apply. Authelia doesn't care about
+that reasoning at all -- it hard-requires the protected URL's scheme to
+be https/wss before it'll issue a session cookie, unconditionally, no
+config flag to relax it. Every app behind this Traefik would have hit
+this exact wall, not just whichever one was being tested.
+
+Asked User Penguin to pick between two fixes rather than assuming:
+Cloudflare DNS-01 (real cert, matches sieve's own Traefik and cellar's
+Caddy, costs one more Cloudflare token + outbound internet dependency
+for renewal) versus Traefik's own self-signed default (zero external
+dependency, costs a permanent browser cert warning on every silo UI).
+Picked DNS-01. Also asked whether to fix percolator's identical latent
+bug now (same plain-HTTP pattern, nothing live there yet) or defer it --
+picked fix-it-now, to avoid re-running this exact multi-round diagnosis
+a second time whenever percolator actually gets built.
+
+Built `stacks/silo/traefik/config/traefik.yml.template` (adapted from
+sieve's own, same `cloudflare` DNS-01 resolver, no `providers.docker`
+block since silo routes via the file provider + container DNS only, not
+labels). Switched `stacks/silo/traefik/docker-compose.yml` from its
+inline `command:` block to this static file -- the nested
+`certificatesResolvers.dnsChallenge` config isn't practical as CLI flags.
+Added `443:443` alongside the existing `80:80` (now redirect-only, `web`
+-> `websecure`), a `/srv/data/traefik/letsencrypt` volume for ACME state,
+and `CF_DNS_API_TOKEN` wired into `generate-secrets.sh` via
+`prompt_if_placeholder` (same required scope as sieve's/cellar's own
+Cloudflare tokens -- safe to reuse the same real value, tokens aren't
+tied to one server). Changed every router in `dynamic.yml.template` from
+`entrypoints: [web]` to `[websecure]` -- the actual fix, `web` alone
+would still be plain HTTP. Rewrote both files' header comments to carry
+the full story rather than the now-false "plain HTTP, no ACME, LAN-only"
+reasoning that caused this in the first place.
+
+Did the identical set of changes to percolator's dormant `traefik/`
+directory (new `traefik.yml.template` keeping its `providers.docker`
+block since percolator routes via labels, not silo's file-only pattern;
+same `docker-compose.yml`/`generate-secrets.sh` changes; a note in the
+template's own comment for whoever wires up nextcloud/paperless/
+homeassistant's routing labels later: use `entrypoints=websecure`, not
+`web`, from the start). Percolator's `dynamic.yml.template` has no app
+routers yet (nothing routed through it at all so far), so nothing there
+needed the `[web]` -> `[websecure]` change -- just the underlying
+`traefik.yml`/compose/secrets plumbing, pre-emptively correct for
+whenever routers do get added.
+
+Updated both nodes' README `### traefik` sections and Known-gaps with
+the full story (including two new silo gaps: Traefik's dependency on
+sieve's Authelia port staying published, and `acme.json` having no
+backup of its own) and fixed two other stale lines caught along the way
+on percolator's README (a `generate-secrets.sh` bullet still saying "no
+per-app entries", and a Known-gaps bullet still saying `traefik/` has no
+compose file at all).
+
+Validated every touched file before handing off: both `docker-compose.yml`s and `generate-secrets.sh`s functionally tested/parsed, both
+`traefik.yml.template`s and `dynamic.yml.template`s rendered via a
+throwaway `envsubst` + PyYAML parse. Not yet applied on sieve, silo, or
+percolator (percolator not physically buildable yet regardless).
+
+### Pending, this entry
+
+- **On silo**: `git pull`, `sudo mkdir -p /srv/data/traefik/letsencrypt`,
+  `sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp`, fill in
+  `traefik/secrets.env.local`'s `CF_DNS_API_TOKEN` (via `generate-
+  secrets.sh` or by hand), `./render-configs.sh`,
+  `sudo ./compose.sh traefik down && sudo ./compose.sh traefik up -d`,
+  then `docker logs traefik --tail 30` -- look for successful ACME
+  issuance, not just a clean container start. Re-test with
+  `curl -k -H "Host: homepage.whiskertreat.fyi" https://localhost/`.
+- Once that works: still need sieve's Pi-hole Local DNS Records for real
+  (unchanged pending item from earlier tonight) before any of this is
+  reachable by an actual browser, not just curl with a forced Host
+  header.
+- Percolator's version of all of this is completely untested -- confirm
+  on its first real bring-up, whenever that happens.
