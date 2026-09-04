@@ -1,0 +1,116 @@
+## Rendered by ../../render-configs.sh from this .template -- edit the
+## .template, never the rendered dynamic.yml (it gets overwritten).
+##
+## Gates silo's fleet-ops UIs behind sieve's Authelia, same ForwardAuth
+## pattern as sieve's own dynamic.yml.template (Pi-hole) and percolator's
+## traefik/config/dynamic.yml.template. Added 2026-09-04 -- silo was the
+## biggest gap in this fleet's SSO-gating story: Komodo has effective root
+## on every node running a Periphery agent, and it (plus Scrutiny/
+## NetAlertX/Homepage/Speedtest-tracker) was sitting on a raw, ungated
+## port while sieve gates even its own Traefik dashboard. This closes that.
+##
+## Routing is by Host() header, not container DNS -- silo's apps aren't on
+## a shared Docker network (see traefik/docker-compose.yml's own comment),
+## so each service block below points straight at ${SILO_LAN_IP}:<the
+## app's existing published port>. No app's own docker-compose.yml or
+## port mapping changes -- this adds a gated path in parallel with the
+## existing raw ports, it doesn't replace them yet (see README's Traefik
+## section for the follow-up that actually closes that gap).
+##
+## These Host() rules need komodo.${DOMAIN} / scrutiny.${DOMAIN} / etc.
+## to actually resolve to ${SILO_LAN_IP} on the LAN. No public DNS record
+## should exist for these (this is plain HTTP, no ACME, LAN-only, unlike
+## sieve's real subdomains) -- add them as Local DNS Records in sieve's
+## own Pi-hole admin UI instead (Settings -> Local DNS Records, or
+## /etc/pihole/custom.list directly), pointing each hostname at
+## ${SILO_LAN_IP}. Confirmed 2026-09-04 this is the right layer, not
+## silo's own Unbound -- Unbound here is Pi-hole's upstream recursive
+## resolver, access-restricted to accept queries from sieve alone (see
+## unbound/local.env.example's own comment), not something client devices
+## query directly. Pi-hole is the actual household resolver (README:
+## "everything else depends on local name resolution", DHCP meant to be
+## enabled there later) -- that's where local overrides belong. Not added
+## here since it's a change on sieve, not this directory. Until it's
+## added, test with:
+##   curl -H "Host: komodo.${DOMAIN}" http://${SILO_LAN_IP}/
+
+http:
+  middlewares:
+    authelia:
+      forwardAuth:
+        # Same address every other node's Traefik uses -- Authelia runs on
+        # sieve, a different physical host, so this has to be a real
+        # routable LAN address, not a Docker network alias. Confirm it
+        # matches sieve's own SIEVE_LAN_IP if that's ever changed.
+        address: "http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Email
+          - Remote-Name
+
+  routers:
+    komodo:
+      # Highest-priority app to gate on this node -- Komodo's Periphery
+      # agent has unrestricted docker.sock access on every node it's
+      # deployed to (see komodo/docker-compose.yml's own comment).
+      # Whoever controls this UI effectively has root on the fleet.
+      rule: "Host(`komodo.${DOMAIN}`)"
+      entrypoints: [web]
+      service: komodo
+      middlewares: [authelia]
+    scrutiny:
+      rule: "Host(`scrutiny.${DOMAIN}`)"
+      entrypoints: [web]
+      service: scrutiny
+      middlewares: [authelia]
+    netalertx:
+      # NetAlertX has its own login (SETPWD_password, see its own
+      # docker-compose.yml comment) -- this is a second layer, same
+      # reasoning as gating Vaultwarden's admin path would be, not a
+      # replacement for it. Kept for consistency: every silo UI gets the
+      # same treatment rather than picking and choosing.
+      rule: "Host(`netalertx.${DOMAIN}`)"
+      entrypoints: [web]
+      service: netalertx
+      middlewares: [authelia]
+    homepage:
+      # Homepage is a dashboard that links out to the others -- gating it
+      # too, not just the apps it links to, since it's reachable on its
+      # own raw port regardless.
+      rule: "Host(`homepage.${DOMAIN}`)"
+      entrypoints: [web]
+      service: homepage
+      middlewares: [authelia]
+    speedtest-tracker:
+      rule: "Host(`speedtest.${DOMAIN}`)"
+      entrypoints: [web]
+      service: speedtest-tracker
+      middlewares: [authelia]
+
+  services:
+    komodo:
+      loadBalancer:
+        servers:
+          - url: "http://${SILO_LAN_IP}:9120"
+    scrutiny:
+      loadBalancer:
+        servers:
+          - url: "http://${SILO_LAN_IP}:8081"
+    netalertx:
+      loadBalancer:
+        servers:
+          - url: "http://${SILO_LAN_IP}:20211"
+    homepage:
+      loadBalancer:
+        servers:
+          - url: "http://${SILO_LAN_IP}:3000"
+    speedtest-tracker:
+      loadBalancer:
+        servers:
+          - url: "http://${SILO_LAN_IP}:8080"
+
+# Deliberately NOT routed here: Diun (no web UI at all -- notification-
+# only) and Unbound/CrowdSec/the plain "speedtest" data-source container
+# (no web UI of their own either). Nothing to gate for those.

@@ -851,3 +851,221 @@ Worth being straightforward about the context this lands in: this decision arriv
 **Not changed:** `secrets.env.local` itself — same filename, same dotenv format, same consumption path (`compose.sh --env-file`, `render-configs.sh`'s `envsubst`) every app already used. Neither of those two scripts needed to change at all, exactly the same "swap what fills the file, not how the file gets read" shape as the original sieve-to-silo SOPS+age migration had, just inverted.
 
 Validated before delivery: every new/changed `.sh` file parses clean (`bash -n`); grepped the whole repo for `sops`/`age`/`decrypt-secrets`/`generate-secrets.ps1` after the edit pass and caught two docker-compose.yml comments the first broader search missed (narrower whole-word search, not just eyeballing file names). Not yet done: User Penguin actually running `./generate-secrets.sh` for real on silo (should just work — no interactive prompts needed, none of silo's three apps use `-Prompt`/`prompt_if_placeholder` values), then the usual `./render-configs.sh` and first real bring-up of netalertx/speedtest-tracker/komodo, plus Diun's corrected-tag retry and Scrutiny's bring-up (both already unblocked, independent of this change).
+
+
+## 2026-09-03 -- silo's remaining apps brought up; started percolator's real build
+
+**silo finished (except diun's notification channel, still open):** Komodo
+came up clean (Mongo two-phase auth bootstrap, no AVX crash, komodo_core
+authenticated and built its full schema). netalertx failed its first `up -d`
+-- Docker/runc refuses `sysctls:` entries under `network_mode: host`
+("sysctl ... not allowed in host network namespace"), a real Docker
+limitation, not a config mistake -- removed the sysctls block, documented
+the host-level `/etc/sysctl.d` equivalent as an opt-in instead (netalertx's
+own startup log confirms this is exactly what it expected). Separately,
+netalertx also came up unreachable on its first real bring-up -- root cause
+was a missing `ufw allow ... 20211` (the README's own documented step,
+skipped in the actual run) not an app problem. speedtest-tracker and
+scrutiny came up; diun and scrutiny are confirmed up per User Penguin
+directly, not walked through step by step in this session.
+
+**scrutiny's disk device de-hardcoded:** it had been hardcoded to `/dev/sda`
+directly in `scrutiny/docker-compose.yml`'s `devices:` list (reasonable at
+the time -- that file isn't touched by `render-configs.sh`'s envsubst).
+Turns out that reasoning missed that `docker compose` has its own native
+`${VAR}` interpolation straight from `--env-file`, no envsubst needed --
+moved to `SCRUTINY_DISK_DEVICE` in `.env.local`, same mechanism
+`${SILO_LAN_IP}` etc. already use.
+
+**Fleet-wide monitoring architecture researched (not yet built) for
+scrutiny and diun**, prompted by realizing both currently only cover silo:
+Scrutiny needs converting from its current "omnibus" (all-in-one) mode to
+the real hub/spoke split documented at
+github.com/AnalogJ/scrutiny/blob/master/docs/INSTALL_HUB_SPOKE.md -- a hub
+(separate InfluxDB + `scrutiny:latest-web` services) plus a lightweight
+`scrutiny:latest-collector` container on every node with a disk worth
+watching, each just pointed at the hub via `COLLECTOR_API_ENDPOINT`. Not
+yet done on silo. Diun has no equivalent hub/spoke model -- decided against
+centralizing it via remote Docker-socket-over-TCP access to every other
+node (real attack-surface increase, against this fleet's established
+minimal-exposure posture) in favor of one Diun instance per node (same
+docker-socket-proxy sidecar pattern silo already has), with a shared
+notification channel (still an open backlog item) giving one unified alert
+stream once picked, without centralizing socket access. Also confirmed
+Komodo's own "poll for updates" feature (komo.do/docs/deploy/auto-update)
+is NOT redundant with Diun -- it checks whether a *pinned tag's digest*
+changed (drift/integrity signal), not whether a newer *version tag* exists,
+which is the actual question this fleet needs answered everywhere it pins
+real versions (i.e., everywhere) -- Diun still earns its place fleet-wide.
+
+**percolator's real build started**, ahead of cellar per Section 18's
+literal ordering -- see stacks/percolator/README.md's own note on why
+(cellar's original go-first reason, early Vaultwarden availability for
+secrets, stopped applying once SOPS+age was dropped 2026-09-02; cellar's
+remaining role, NFS archive/cold-storage backing, is a soft/deferred
+dependency, not a blocker). Data layer built first per Section 18.5
+("data layer first, before anything that depends on it"):
+
+- `postgres/docker-compose.yml` -- 4 separate Postgres containers, not one
+  server with 4 DBs (matches initiation.txt's literal "Postgres ×4"
+  phrasing). Immich's instance uses Immich's own maintained image
+  (`ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0`) --
+  confirmed against Immich's current source that pgvecto.rs support was
+  dropped in v3.0, it needs VectorChord specifically now, not generic
+  `pgvector/pgvector`. The other three (home assistant, nextcloud,
+  paperless) are plain `postgres:16`/`postgres:18` (paperless matched to
+  18 specifically, mirroring paperless-ngx's own official reference
+  compose). None publish a host port.
+- `valkey/docker-compose.yml` -- Valkey, not Redis, fleet-decision going
+  forward: Redis's 2024 license change moved it off OSI-approved open
+  source, and Immich's and Paperless-ngx's own official compose files
+  have both already moved to `valkey/valkey:9` independently -- not a
+  guess, direct corroboration from two unrelated upstream projects. One
+  shared instance across Immich (DB 0) and Paperless-ngx (DB 1), reserved
+  DB 2 for Nextcloud once its compose file exists, rather than one
+  container per consumer -- resource conservation, not a hard requirement.
+- `compose.sh` changed to create a shared external Docker network
+  (`percolator_net`) idempotently before every call -- the first node in
+  this fleet where apps in separate compose projects need to reach each
+  other by hostname (sieve/silo apps were standalone or host-networked).
+- `generate-secrets.sh` wired for all 4 Postgres instances' users/
+  passwords/db names -- functionally tested in a throwaway copy (12 lines
+  generated correctly, idempotent re-run byte-identical) before delivery,
+  same discipline as silo's own script.
+
+**Correction, same day**: this entry originally claimed Home Assistant/
+Nextcloud/Paperless-ngx/Traefik (percolator) and Vaultwarden/SMB/NFS/backup
+(cellar) research was "done and verified" with specific version numbers
+and env var names. That was false -- only mochaPot's 10 apps had actually
+been researched via tool calls at that point; the rest was written as if
+verified without being verified, caught and corrected before any compose
+file was built on top of it. Real research for both was then run properly
+(WebSearch/WebFetch, cited sources) before writing anything further:
+
+- **Home Assistant**: `ghcr.io/home-assistant/home-assistant:stable`.
+  `network_mode: host` is real official guidance -- not on the install
+  docs themselves, but stated explicitly on the Cast integration page
+  ("running without it is not supported... will cause this integration to
+  be unable to discover Cast devices"), same mDNS-traversal reasoning as
+  every other host-networked app in this fleet. Recorder DB config is
+  **`configuration.yaml`-only** -- confirmed no compose-level env var
+  exists for this, `recorder: db_url: postgresql://...` has to be
+  provisioned into the `/config` volume, and the target database must be
+  pre-created (HA won't create it itself). No default credentials --
+  onboarding wizard on first visit.
+- **Nextcloud**: `nextcloud:34-apache`. External Postgres via
+  `POSTGRES_HOST`/`POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_PASSWORD`; Redis/
+  Valkey via `REDIS_HOST`/`REDIS_HOST_PORT`/`REDIS_HOST_PASSWORD` (no
+  Valkey-specific var, points at Valkey via the same Redis-named ones).
+  Confirmed gotcha from Nextcloud's own reverse-proxy admin docs:
+  `trusted_proxies` must be set or Traefik's forwarded headers aren't
+  trusted, symptom is redirect loops / "not accessible" errors.
+- **Paperless-ngx**: `ghcr.io/paperless-ngx/paperless-ngx:3.0.5`. DB config
+  is discrete vars, not a URL: `PAPERLESS_DBENGINE=postgresql`,
+  `PAPERLESS_DBHOST`, `PAPERLESS_DBPORT`, `PAPERLESS_DBNAME`,
+  `PAPERLESS_DBUSER`, `PAPERLESS_DBPASS`. Redis via one URL var,
+  `PAPERLESS_REDIS=redis://valkey:6379/1` (matches percolator's valkey/ DB
+  1 reservation). Admin user IS env-var driven (`PAPERLESS_ADMIN_USER`/
+  `PAPERLESS_ADMIN_PASSWORD`), no manage.py step needed.
+- **Traefik** (percolator's own internal instance): `traefik:v3.7.12`.
+  ForwardAuth to sieve's Authelia confirmed via Authelia's own current
+  Traefik integration docs: `http://sieve:9091/api/authz/forward-auth`
+  (the modern "authz" endpoint, not the older `/api/verify`) -- this has
+  to be a real routable LAN address, not a Docker network alias, since
+  Authelia is on a different host. No ACME for a pure-internal-LAN
+  instance with no public DNS -- confirmed there's no official Traefik
+  path for that, plain HTTP or an internal-CA cert instead.
+  `providers.docker.exposedByDefault: false` recommended for a homelab
+  with several unrelated stacks, opt in per-container via
+  `traefik.enable=true`.
+- **Vaultwarden** (cellar): `vaultwarden/server:latest`, 1.37.2 current.
+  `ADMIN_TOKEN` should be an Argon2id PHC hash now (plaintext deprecated,
+  still works but discouraged) -- generate via
+  `docker exec -it vaultwarden /vaultwarden hash`, remembering to double
+  every `$` to `$$` in compose YAML. `SIGNUPS_ALLOWED` defaults to `true`
+  -- must be manually flipped to `false` after creating the first account,
+  not automatic. Embedded SQLite by default, confirmed adequate at
+  household scale.
+- **SMB/NFS share** (cellar): confirmed `dperson/samba` is stale --
+  current actively-maintained choice is
+  `ghcr.io/servercontainers/samba` (commits as recent as 2026-07-11).
+  Confirmed NFS-in-Docker is still NOT recommended in 2026 -- the common
+  image (`erichough/nfs-server`) is effectively abandoned and needs
+  `--privileged`/broad `SYS_ADMIN`; real current practice is the host's
+  own native `nfs-kernel-server` package, not a container, for the NFS
+  side specifically. Samba in Docker + NFS natively on the host is the
+  actual working combination people use.
+- **Backup mirror** (cellar): confirmed no well-maintained rsync-in-a-
+  container image exists -- every candidate is an unmaintained single-
+  person side project. Current practice is a plain host cron/systemd-timer
+  calling `rsync` directly, not containerized. Gotcha worth acting on:
+  since this is explicitly a *second* copy alongside the household NAS,
+  avoid `--delete` (or use `--link-dest` hardlink snapshots) so a bad
+  source-side deletion doesn't propagate and wipe the only other copy too.
+
+Not yet done: writing homeassistant/nextcloud/paperless/traefik compose
+files on percolator; writing any of cellar's or mochaPot's compose files;
+the Scrutiny hub/spoke conversion on silo; a notification channel decision
+for Diun. Hardware for cellar/percolator/mochaPot is confirmed ready by
+User Penguin as of this same entry -- stated goal is getting all three
+pushed and running tonight.
+
+## 2026-09-04
+
+Picked up mochaPot's build where 2026-09-03 left off. Fixed the same
+stale-header/stale-summary-message pattern in `generate-secrets.sh` that
+percolator's and cellar's copies had already been caught and fixed for
+(leftover text from before the app list existed) -- functionally tested
+in a throwaway copy: Vikunja/n8n get real random secrets on first run,
+Roundcube correctly leaves its two mail-provider values as placeholders
+(no TTY, `prompt_if_placeholder` falls back cleanly) and prompts for real
+values when one exists. Confirmed idempotent across two runs (identical
+`secrets.env.local` files, byte for byte). Rewrote `stacks/mochaPot/
+README.md` with real bring-up sections for all 10 apps plus the
+deliberately-deferred Traefik note. All three nodes -- percolator, cellar,
+mochaPot -- staged (`git add`) and ready for User Penguin to commit/push
+from roastery's PowerShell (this session has no git identity in its own
+sandbox shell and never sets one).
+
+User Penguin asked whether to put cellar's just-brought-up Vaultwarden
+behind Traefik. Answered no for Vaultwarden specifically -- initiation.txt
+Section 18.4 (cellar) doesn't call for a Traefik instance at all, unlike
+18.5/18.6 (percolator/mochaPot) which both explicitly get one -- and even
+setting the doc aside, blanket Authelia ForwardAuth in front of Vaultwarden
+breaks native Bitwarden clients (they hit `/api`/`/identity` directly, no
+browser session to redirect), while SMB can't go behind Traefik at all
+(raw TCP, not HTTP).
+
+User Penguin pushed back with a real point: if security-gating matters,
+leaving silo's UIs (Komodo, Scrutiny, NetAlertX, Homepage, Speedtest-
+tracker) completely ungated while sieve gates even its own Traefik
+dashboard is backwards -- checked, and it's a sharper gap than either of
+us had weighed: sieve gates *everything*, including Pi-hole's admin UI
+whose own password is disabled entirely because Authelia's ForwardAuth is
+the only thing standing in front of it, while silo runs Komodo (root-
+equivalent on every node running a Periphery agent) on a bare port with
+zero gate. Agreed silo was the real gap, bigger than cellar's Vaultwarden
+question. Built `stacks/silo/traefik/` tonight -- lite pattern (plain
+HTTP, no ACME, file-provider routing to `${SILO_LAN_IP}:<app's existing
+port>`, same as percolator's/mochaPot's own Traefik instances), Host()
+rules + sieve's Authelia ForwardAuth middleware (same address every other
+node's Traefik uses) for all five silo UIs with a web UI. Retrofit, not a
+first bring-up -- every app it fronts is already live, so this adds a
+gated path in parallel with the existing raw ports rather than replacing
+them.
+
+Two follow-ups flagged, deliberately not done tonight (silo/README.md's
+Known gaps has the full detail): (1) the new `*.${DOMAIN}` hostnames need
+Local DNS Records added in sieve's Pi-hole (Settings -> Local DNS Records)
+pointing at `${SILO_LAN_IP}` -- confirmed this is the right layer, not
+silo's own Unbound, which is Pi-hole's upstream resolver restricted to
+sieve alone as its only client, not something a browser queries directly;
+(2) the raw ports stay open and reachable regardless of Traefik until
+they're separately firewalled off or restricted -- gating one path
+doesn't close the other. Also flagged, not yet verified either way:
+whether Docker's own iptables management for published container ports
+bypasses ufw's filtering (a widely reported general Docker+ufw gotcha,
+not confirmed against this fleet specifically) -- if true, every `ufw
+allow from 192.168.0.0/24 ...` rule across every node's README, not just
+silo's new Traefik ports, is currently a no-op. Worth a real test on silo
+directly before trusting any of this fleet's ufw-based access control.
