@@ -20,6 +20,35 @@ services:
       - redis
     networks:
       - sieve_proxy
+    ports:
+      - "9091:9091"
+    # Added 2026-09-04, same category of exception as Komodo's 9120 on
+    # silo (see stacks/silo/komodo/docker-compose.yml's own comment):
+    # other physical hosts' Traefik instances (silo now, percolator/
+    # mochaPot once they're live) call Authelia's ForwardAuth endpoint
+    # directly, and Docker networks don't span hosts, so this can't stay
+    # sieve_proxy-only the way most of sieve's own apps do.
+    #
+    # Tried routing that call through sieve's own public Traefik instead
+    # first (https://authelia.${DOMAIN}/api/authz/forward-auth) rather
+    # than opening a raw port -- wrong, reverted. Confirmed via Authelia's
+    # own logs on first real test from silo: `error="header
+    # 'X-Forwarded-Method' is empty"`. Reason: ForwardAuth depends on
+    # X-Forwarded-Method/Proto/Host/Uri describing the ORIGINAL request
+    # being authorized (e.g. homepage.${DOMAIN}), set by the CALLING
+    # Traefik (silo's). Routing that call through a second, unrelated
+    # Traefik hop (sieve's own public router, which has no idea it's
+    # part of a ForwardAuth chain) reprocesses the request through
+    # ordinary reverse-proxy logic and drops/overwrites those headers --
+    # X-Forwarded-Method isn't a standard proxy header, so it just
+    # vanishes. A direct hop is required; there's no way around it.
+    #
+    # Same Docker-NAT-bypasses-ufw exposure as Komodo's port -- accepted
+    # here too, but genuinely lower stakes: unlike Komodo (root-
+    # equivalent docker.sock access), an unauthenticated direct hit on
+    # this endpoint just gets the same "not authorized, redirecting to
+    # login" response Authelia already gives anyone unauthenticated. It
+    # doesn't grant access to anything by itself.
     environment:
       TZ: ${TZ:-Asia/Kolkata}
     volumes:

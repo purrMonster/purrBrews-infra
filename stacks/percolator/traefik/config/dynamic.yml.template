@@ -5,24 +5,24 @@ http:
         # Confirmed 2026-09-03 via Authelia's own current Traefik
         # integration docs: /api/authz/forward-auth is the modern "authz"
         # endpoint (superseding the older /api/verify). This has to be a
-        # real routable address, not a Docker network alias -- Authelia
-        # runs on sieve, a different physical host, so Docker's own
-        # service discovery can't reach it.
+        # direct hop to Authelia's own port, not routed through sieve's
+        # public Traefik -- tried that first 2026-09-04 for silo's
+        # identical copy of this address, wrong: Authelia's own logs
+        # showed `error="header 'X-Forwarded-Method' is empty"` on the
+        # first real cross-host test. ForwardAuth depends on
+        # X-Forwarded-Method/Proto/Host/Uri describing the ORIGINAL
+        # request being authorized, set by THIS Traefik -- routing
+        # through a second, unrelated Traefik hop drops headers like
+        # X-Forwarded-Method that aren't standard reverse-proxy headers.
+        # A direct hop is required; there's no way around it.
         #
-        # FIXED 2026-09-04, before this was ever brought up for real:
-        # the previous address, http://${SIEVE_LAN_IP}:9091/..., pointed
-        # at a port sieve's Authelia never actually publishes to its own
-        # host (see stacks/sieve/authelia/docker-compose.yml -- it only
-        # joins sieve's internal sieve_proxy Docker network). Caught when
-        # silo's identical copy of this same address returned an
-        # immediate empty 500 on its first real test -- silo's template
-        # got the same fix, see its own comment for the full story.
-        # Routes through sieve's own Traefik instead (already publishes
-        # 443 with a real ACME cert, already routes authelia.${DOMAIN} to
-        # the Authelia container -- the same path browsers already use to
-        # log in). Requires authelia.${DOMAIN} to resolve from percolator,
-        # same as every other *.${DOMAIN} hostname this fleet depends on.
-        address: "https://authelia.${DOMAIN}/api/authz/forward-auth"
+        # sieve's Authelia now publishes 9091 to its own host for exactly
+        # this reason (see stacks/sieve/authelia/docker-compose.yml's own
+        # comment for the full story, including why this exception is
+        # lower-stakes than Komodo's 9120 one). ${SIEVE_LAN_IP} comes
+        # from .env.local, same value silo's own unbound access-
+        # control.conf already depends on.
+        address: "http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth"
         trustForwardHeader: true
         authResponseHeaders:
           - Remote-User

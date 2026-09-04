@@ -1463,3 +1463,54 @@ handing off; not yet applied on silo itself.
 - Same fix still needs applying to percolator whenever its Traefik
   actually gets brought up for the first time -- already done in the
   template, just noting it's untested there too.
+
+## 2026-09-04 (cont.) — the previous entry's fix was wrong; corrected
+
+Applied the "route ForwardAuth through sieve's own public Traefik"
+fix from the entry above; 500 became 400. Checked Authelia's own logs
+on sieve directly and found the real reason: `error="header
+'X-Forwarded-Method' is empty"`, from `remote_ip=192.168.0.12` (silo).
+
+Root issue with that fix: ForwardAuth depends on `X-Forwarded-Method`/
+`Proto`/`Host`/`Uri` describing the ORIGINAL request being authorized
+(e.g. `homepage.${DOMAIN}`), set by the CALLING Traefik (silo's).
+Routing that call through a second, unrelated Traefik hop (sieve's own
+public router, routing `authelia.${DOMAIN}` as an ordinary app) reprocesses
+the request through normal reverse-proxy logic -- which has no concept of
+`X-Forwarded-Method` (not a standard proxy header, invented specifically
+for the ForwardAuth protocol) and just drops it. A direct hop to
+Authelia's own port turns out to be structurally required, not just one
+option among several -- the thing I was trying to avoid by not opening a
+raw port on sieve.
+
+Reverted both `dynamic.yml.template` files (silo, percolator) back to
+`http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth` -- the original,
+structurally-correct address -- and fixed the actual underlying problem
+instead: added `ports: ["9091:9091"]` to `stacks/sieve/authelia/
+docker-compose.yml`. Same category of cross-host exception as Komodo's
+9120 on silo (Docker networks don't span hosts, so a service other
+hosts' Traefik instances need to call directly has to publish a real
+port), but genuinely lower stakes -- an unauthenticated direct hit on
+this endpoint just gets Authelia's normal "not authorized, redirecting
+to login" response, not root-equivalent access the way Komodo's port
+grants. Same Docker-NAT-bypasses-ufw exposure applies and is accepted
+here too, documented in the compose file's own comment rather than
+worked around.
+
+Validated all three edited files (silo's and percolator's templates
+via a throwaway `envsubst` + PyYAML parse, sieve's authelia compose file
+via a direct PyYAML parse) before handing off. Not yet applied on sieve
+or silo.
+
+### Pending, this entry
+
+- **On sieve**: `git pull`, `sudo ./compose.sh authelia up -d` (recreate,
+  to pick up the new `ports:` mapping).
+- **On silo**: `git pull`, `./render-configs.sh` (re-render `dynamic.yml`
+  with the reverted address), `sudo ./compose.sh traefik down && sudo
+  ./compose.sh traefik up -d`, then re-test:
+  `curl -H "Host: homepage.whiskertreat.fyi" http://localhost/` -- expect
+  a real redirect-to-Authelia-login now (302), not a 500 or 400.
+- Same sequence (once it's actually brought up for the first time)
+  applies to percolator later -- its template has the same corrected
+  address now, untested there too.
