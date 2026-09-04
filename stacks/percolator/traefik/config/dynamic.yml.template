@@ -1,0 +1,20 @@
+http:
+  middlewares:
+    authelia:
+      forwardAuth:
+        # Confirmed 2026-09-03 via Authelia's own current Traefik
+        # integration docs: /api/authz/forward-auth is the modern "authz"
+        # endpoint (superseding the older /api/verify). This has to be a
+        # real routable LAN address, not a Docker network alias -- Authelia
+        # runs on sieve, a different physical host, so Docker's own
+        # service discovery can't reach it. ${SIEVE_LAN_IP} comes from
+        # .env.local, same value silo's own unbound access-control.conf
+        # already depends on -- confirm it matches sieve's own
+        # SIEVE_LAN_IP if it's ever changed there.
+        address: "http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Email
+          - Remote-Name

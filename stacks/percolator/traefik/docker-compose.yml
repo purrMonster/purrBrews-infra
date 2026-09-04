@@ -1,0 +1,47 @@
+services:
+  traefik:
+    # v3.7.12 current stable, confirmed 2026-09-03 via DockerHub tags.
+    image: traefik:v3.7.12
+    container_name: traefik
+    command:
+      # exposedByDefault: false -- confirmed 2026-09-03 via Traefik's own
+      # docker provider reference: default is true, which on a homelab
+      # host running several unrelated compose stacks on percolator_net
+      # would silently expose every container that happens to be on that
+      # network. Opt in per-container instead with traefik.enable=true.
+      - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
+      # percolator_net specifically -- confirmed via Traefik's own docs
+      # that for containers not on Traefik's own default network, it
+      # needs to be told which network to route to; this is that.
+      - "--providers.docker.network=percolator_net"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      # No ACME/TLS resolver -- confirmed 2026-09-03: this instance is
+      # purely internal-LAN, no public DNS, and Traefik has no documented
+      # ACME path for that case (HTTP-01/DNS-01 both assume public
+      # reachability). Plain HTTP for now; an internal-CA cert via a
+      # static tls.certificates file provider is the documented
+      # alternative if LAN-encrypted traffic becomes a real requirement
+      # later -- not done here, this fleet's own LAN is already the trust
+      # boundary for everything else in it (same posture as scrutiny/
+      # netalertx having no TLS on silo).
+      - "--api.dashboard=false"
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+    networks:
+      - percolator_net
+    restart: unless-stopped
+    # No apps route through this yet -- nextcloud/paperless/homeassistant
+    # need traefik.enable=true + routing labels added to their own compose
+    # files once this is confirmed working, not done automatically here to
+    # avoid breaking their current direct-port access before Traefik is
+    # verified healthy.
+
+networks:
+  percolator_net:
+    external: true

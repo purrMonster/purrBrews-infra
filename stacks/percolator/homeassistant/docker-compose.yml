@@ -1,0 +1,44 @@
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    container_name: homeassistant
+    # network_mode: host is real official guidance, not a common-practice
+    # guess -- confirmed 2026-09-03 via Home Assistant's own Cast
+    # integration docs: "When running the Home Assistant Container in
+    # Docker, make sure it is running with host network mode. Running
+    # without it is not supported... and will cause this integration to
+    # be unable to discover Cast devices." Same mDNS-multicast-doesn't-
+    # cross-bridge-networks reasoning as Music Assistant on mochaPot.
+    # Consequence: this container can't join percolator_net or resolve
+    # its container DNS names -- see postgres/docker-compose.yml's own
+    # comment on how postgres-homeassistant is reached instead
+    # (127.0.0.1:5432, published to loopback specifically for this).
+    network_mode: host
+    volumes:
+      - /srv/data/homeassistant:/config
+      - /etc/localtime:/etc/localtime:ro
+      # Bluetooth integrations -- from HA's own official compose example,
+      # harmless to include even if no Bluetooth adapter is used yet.
+      - /run/dbus:/run/dbus:ro
+    environment:
+      TZ: ${TZ}
+    restart: unless-stopped
+    # No default credentials -- onboarding wizard on first visit to
+    # http://<PERCOLATOR_LAN_IP>:8123, confirmed via HA's own install docs.
+    #
+    # IMPORTANT -- the Postgres recorder is NOT configurable via compose at
+    # all. Confirmed 2026-09-03 via HA's own Recorder integration docs:
+    # there is no env var for this, it's configuration.yaml-only, and HA
+    # does not create the target database itself (already created here by
+    # generate-secrets.sh's postgres/ block + postgres/docker-compose.yml's
+    # POSTGRES_DB). After first boot, add to
+    # /srv/data/homeassistant/configuration.yaml:
+    #
+    #   recorder:
+    #     db_url: postgresql://homeassistant:<HA_DB_PASSWORD from
+    #       ../postgres/secrets.env.local>@127.0.0.1:5432/homeassistant
+    #
+    # then restart the container. Left as SQLite (HA's own default) until
+    # that manual step is done -- functions fine either way, Postgres is
+    # a scale/performance upgrade for the recorder specifically, not a
+    # hard requirement to get HA running.

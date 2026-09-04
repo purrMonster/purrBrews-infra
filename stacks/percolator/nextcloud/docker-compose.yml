@@ -1,0 +1,46 @@
+services:
+  nextcloud:
+    # -apache variant -- confirmed 2026-09-03 via Nextcloud's own DockerHub
+    # page as "a full Nextcloud installation including an apache web
+    # server... designed to be easy to use and gets you running pretty
+    # fast", the simpler standalone choice over -fpm (which needs a
+    # separate webserver in front of it). 34 is the current stable major.
+    image: nextcloud:34-apache
+    container_name: nextcloud
+    environment:
+      TZ: ${TZ}
+      NEXTCLOUD_ADMIN_USER: barista
+      NEXTCLOUD_ADMIN_PASSWORD: ${NEXTCLOUD_ADMIN_PASSWORD}
+      # Space-separated, per Nextcloud's own docs. PERCOLATOR_LAN_IP so the
+      # LAN IP itself works during setup; the real hostname gets added
+      # once percolator's own Traefik + split-horizon DNS are wired up
+      # (not done yet -- see traefik/ README notes).
+      NEXTCLOUD_TRUSTED_DOMAINS: ${PERCOLATOR_LAN_IP}
+      # Confirmed exact names 2026-09-03 via Nextcloud's own DockerHub docs
+      # -- discrete vars, not a URL.
+      POSTGRES_HOST: postgres-nextcloud
+      POSTGRES_DB: ${NEXTCLOUD_DB_DATABASE_NAME}
+      POSTGRES_USER: ${NEXTCLOUD_DB_USERNAME}
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      # No Valkey-specific var exists -- confirmed Nextcloud points at
+      # Valkey via these same Redis-named vars, since Valkey is wire-
+      # compatible. DB 2 on the shared valkey/ instance -- reserved for
+      # this in valkey/docker-compose.yml's own comment when it was built.
+      REDIS_HOST: valkey
+      REDIS_HOST_PORT: "6379"
+    volumes:
+      - /srv/data/nextcloud:/var/www/html
+    networks:
+      - percolator_net
+    # No ports published yet -- routed through percolator's own Traefik
+    # instance once that's built (see traefik/), same as every other app
+    # in this file. Until then, reach it directly for initial setup via
+    # `docker exec` or a temporary port publish, not baked in permanently.
+    restart: unless-stopped
+    # Known gap, not fixed here: `trusted_proxies`/`overwriteprotocol`/
+    # `overwritehost` (config.php keys, not env vars pre-install) aren't
+    # set yet -- confirmed via Nextcloud's own reverse-proxy admin docs
+    # this is required once Traefik sits in front of this, or the
+    # symptom is redirect loops / "not accessible" errors. Set these once
+    # traefik/ is built and this app is actually routed through it, not
+    # before -- config.php doesn't exist until after first install anyway.

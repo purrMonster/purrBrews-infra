@@ -1,30 +1,185 @@
 # percolator
 
 Stack directory scaffolded 2026-09-01, ahead of percolator actually existing
-as hardware/a VM — see the runbook's 2026-09-01 entry ("prepare the entire
-stack for remaining containers of silo... so that we are prepared for
-percolator, cellar and mochaPot and at last ristretto"). **No apps are
-built here yet.** What's in this directory is only the generic tooling
-every node in this fleet uses (`compose.sh`, `render-configs.sh`,
-`setup-secrets.sh`, `generate-secrets.sh`) copied and adapted from
-stacks/silo/, plus this stub.
+as hardware/a VM. Real build started 2026-09-03. Deploy order per
+initiation.txt Section 0.4/18: sieve → silo → cellar → percolator →
+mochaPot → ristretto — percolator's own build (this directory) started
+before cellar's, since cellar's original reason for going first (Vaultwarden
+available early for secrets storage) stopped applying once the fleet dropped
+SOPS+age for local generation 2026-09-02 — Section 19.3 already says
+Vaultwarden "was never in the critical path for container secrets either
+way." cellar's remaining role (NFS archive/cold-storage backing for
+Paperless-ngx/Nextcloud/Immich) is a soft, deferred dependency, not a
+blocker for what's below.
 
-Deploy order, as best understood right now: sieve → silo → percolator (this
-one) → ... — the exact position of percolator relative to the other
-not-yet-built nodes (percolator/cellar/mochaPot/ristretto) is inferred
-from the order they were listed in when this scaffolding was requested,
-**not confirmed against the initiation doc's own section for percolator**.
-Treat that ordering as a guess, not a fact, until checked there.
+**Deployment mechanism differs from sieve/silo, per Section 19.2**: Komodo
+(live on silo) is the deploy engine for every stack from cellar onward —
+`./compose.sh` here is for local dev/testing against percolator directly,
+not the intended production bring-up path once Komodo's periphery agent is
+configured for this node (not done yet). Compose files are still written
+and committed the exact same way regardless.
 
-Do not add app-specific content to this README speculatively. When
-percolator's actual app list is known (check the initiation doc's relevant
-section first), build each app the same way sieve's and silo's apps were
-built: research the image/tags, check auth/login default state as a first
-step (see silo's runbook entry on why this is a standing discipline now,
-not an afterthought), check current ports in use on this host before
-publishing a new one, write the docker-compose.yml, add any secrets to
-generate-secrets.sh, and document it here under a `## Bringing each app
-up` section with the same structure silo's README uses.
+## Cross-app networking (new as of this node)
+
+Unlike sieve/silo, apps on percolator need to reach EACH OTHER by hostname
+across separate `./compose.sh` projects (Home Assistant/Nextcloud/
+Paperless-ngx each need their own Postgres instance; Paperless-ngx and,
+recommended, Nextcloud also need Valkey). `./compose.sh` now creates a
+shared external Docker network, `percolator_net`, idempotently before every
+call — see that script's own header comment. Every compose file below
+joins it via `networks: { percolator_net: { external: true } }`.
+
+## Bringing each app up
+
+### postgres (4 instances, one compose file)
+
+One `docker-compose.yml`, four separate Postgres containers — matches
+initiation.txt's own "Postgres ×4" phrasing (Section 5.4), not four
+databases on one server, since each consuming app is independent and this
+keeps failure domains separate:
+
+- `postgres-immich` — **not** generic `pgvector/pgvector`. Uses Immich's
+  own maintained image, `ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0`
+  — confirmed 2026-09-03 against Immich's own current
+  `docker/docker-compose.yml` and `docs.immich.app/administration/postgres-standalone`:
+  pgvecto.rs support was dropped in Immich v3.0, it now needs VectorChord
+  specifically. A community vuln scan flagged ~90 CVEs in this image's OS
+  layer (immich-app/immich discussion #23211); the maintainer called most
+  of it scanner noise on unused packages and declined to change base
+  images. Real risk is low given this container is never exposed past
+  `percolator_net`, but worth knowing, not assuming clean.
+- `postgres-homeassistant`, `postgres-nextcloud` — plain `postgres:16`.
+- `postgres-paperless` — plain `postgres:18`, matching Paperless-ngx's own
+  official reference compose (`docker/compose/docker-compose.postgres.yml`)
+  rather than defaulting to 16 like the other two — each app's Postgres
+  version choice is independent, they don't share a server.
+
+None of the four publish a host port — internal-only, reached via
+`percolator_net` by whichever app owns each database. Data at
+`/srv/data/postgres-<app>` each, local disk (never cellar's NFS — Immich's
+own docs are explicit that DB storage must be local, and there's no reason
+to treat the other three differently).
+
+```sh
+sudo mkdir -p /srv/data/postgres-immich /srv/data/postgres-homeassistant /srv/data/postgres-nextcloud /srv/data/postgres-paperless
+sudo ufw allow from <mochaPot's LAN IP> to any port 5432 proto tcp
+./compose.sh postgres up -d
+```
+
+Only `postgres-immich` publishes a port (5432) — corrected 2026-09-03,
+originally designed internal-only, but Immich's server component lives on
+mochaPot, a different physical host, and Docker networks don't span
+hosts. Scoped in ufw to mochaPot's specific LAN IP, not the whole subnet
+— tighter than most of this fleet's ufw rules since this is direct
+database access. `postgres-homeassistant`/`-nextcloud`/`-paperless` stay
+unpublished, same-host consumers only.
+
+### valkey
+
+**Valkey, not Redis** — confirmed 2026-09-03: Redis's 2024 license change
+moved it off OSI-approved open source, and the self-hosting ecosystem has
+shifted accordingly. Not a guess — Immich's own current official compose
+already uses `valkey/valkey:9`, and Paperless-ngx's own official Postgres
+reference compose independently uses `valkey/valkey:9-alpine` as its
+broker too. One shared instance, namespaced by Valkey's built-in logical
+DB indexes rather than one container per consumer (neither app's docs
+require isolation, and it's worth conserving percolator's RAM):
+
+- DB 0 — immich (`REDIS_DBINDEX=0`, the image's own default)
+- DB 1 — paperless-ngx (`PAPERLESS_REDIS=redis://valkey:6379/1`)
+- DB 2 — reserved for nextcloud once its compose file exists (recommended
+  by Nextcloud's own docs, not required)
+
+No password configured, no volume (cache/queue only, ephemeral is correct
+for both current consumers) — matches Immich's own official compose.
+
+```sh
+sudo ufw allow from <mochaPot's LAN IP> to any port 6379 proto tcp
+./compose.sh valkey up -d
+```
+
+Also published to the LAN as of 2026-09-03, same cross-host reason as
+`postgres-immich` above — scope the ufw rule to mochaPot specifically.
+
+### homeassistant
+
+`network_mode: host`, required per Home Assistant's own Cast integration
+docs (mDNS discovery doesn't work otherwise) — confirmed 2026-09-03, not
+assumed. Consequence: it can't reach `postgres-homeassistant` via
+`percolator_net` container DNS the way the other apps do, since host
+networking bypasses Docker's embedded DNS entirely — that instance is
+published to `127.0.0.1:5432` instead, loopback only.
+
+```sh
+sudo mkdir -p /srv/data/homeassistant
+./compose.sh homeassistant up -d
+```
+
+No default credentials — onboarding wizard at `http://<PERCOLATOR_LAN_IP>:8123`.
+**The Postgres recorder needs a manual step after first boot** —
+confirmed there's no compose-level way to configure this, it's
+`configuration.yaml`-only. Add to `/srv/data/homeassistant/configuration.yaml`:
+
+```yaml
+recorder:
+  db_url: postgresql://homeassistant:<HA_DB_PASSWORD from ../postgres/secrets.env.local>@127.0.0.1:5432/homeassistant
+```
+
+then restart. Runs fine on its own default SQLite until you do this —
+not a blocker to bringing HA up, just to getting the recorder onto
+Postgres.
+
+### nextcloud
+
+```sh
+sudo mkdir -p /srv/data/nextcloud
+./compose.sh nextcloud up -d
+```
+
+Admin login: `barista` / `NEXTCLOUD_ADMIN_PASSWORD` from
+`nextcloud/secrets.env.local`. Uses `postgres-nextcloud` and `valkey`
+(DB 2) via `percolator_net`. **Known gap**: `trusted_proxies`/
+`overwriteprotocol`/`overwritehost` (`config.php` keys, don't exist until
+after first install) aren't set yet — required once this is actually
+routed through `traefik/`, confirmed via Nextcloud's own reverse-proxy
+docs the symptom otherwise is redirect loops or "not accessible" errors.
+Set these once traefik/ is verified working, not before.
+
+### paperless
+
+```sh
+sudo mkdir -p /srv/data/paperless/{data,media,export,consume}
+./compose.sh paperless up -d
+```
+
+Admin login: `barista` / `PAPERLESS_ADMIN_PASSWORD` from
+`paperless/secrets.env.local`. Uses `postgres-paperless` and `valkey`
+(DB 1). **Known gaps, not built here**: gotenberg/tika (non-PDF document
+conversion) aren't included — PDF-only consumption works without them.
+Non-English OCR needs tesseract language packs not bundled in this base
+image.
+
+### traefik
+
+Internal-only reverse proxy for percolator's own apps — not sieve's
+tunnel-facing instance. `providers.docker.exposedByDefault=false` —
+confirmed this is the right default for a homelab host running several
+unrelated stacks on `percolator_net`; apps opt in per-container with
+`traefik.enable=true` (not yet added to nextcloud/paperless/homeassistant's
+own compose files — do that once Traefik itself is confirmed healthy, to
+avoid breaking their current direct-port access first). ForwardAuth calls
+sieve's Authelia directly over the LAN
+(`http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth`, confirmed via
+Authelia's own current Traefik integration docs) — `SIEVE_LAN_IP` needs
+to be set in `.env.local` before `render-configs.sh` runs, since Docker
+service discovery can't reach a different physical host by container
+name. No ACME/TLS — confirmed there's no official Traefik path for a
+purely internal-LAN instance with no public DNS; plain HTTP for now.
+
+```sh
+sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
+./compose.sh traefik up -d
+```
 
 ## What's here now
 
@@ -67,12 +222,18 @@ script itself is identical).
 
 ## Known gaps / things to double-check before relying on this
 
-- The deploy-order guess above (percolator positioned after silo, before/after
-  whichever of percolator/cellar/mochaPot/ristretto) is unverified against
-  the initiation doc.
-- No apps exist here yet — this whole directory is untested scaffolding,
-  copied from a working silo setup but never itself run through
-  `setup-secrets.sh` or `compose.sh` against a real host.
+- postgres/ and valkey/ are written and locally YAML-validated but not yet
+  run against real hardware — percolator itself doesn't exist as
+  hardware/a VM yet as of 2026-09-03. First real test of `setup-secrets.sh`
+  and `./compose.sh postgres up -d` happens once it does.
+- homeassistant/, nextcloud/, paperless/, traefik/ have no compose files
+  yet — research is done (see the runbook's 2026-09-03 entry), writing
+  them is next.
+- The Immich postgres image (`ghcr.io/immich-app/postgres`) carries ~90
+  flagged CVEs in its OS layer per a community scan (immich-app/immich
+  discussion #23211) that its maintainer has declined to remediate —
+  acceptable given it's never exposed past `percolator_net`, but revisit
+  if that isolation assumption ever changes.
 - If percolator will run a Komodo Periphery agent (so silo's Komodo Core can
   manage it), see `stacks/_templates/komodo-periphery/docker-compose.yml`
   — copy it into an app subdirectory here once percolator exists and fill in

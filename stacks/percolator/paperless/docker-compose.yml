@@ -1,0 +1,55 @@
+services:
+  paperless:
+    # Confirmed 2026-09-03 via paperless-ngx's own GHCR package page and
+    # its reference docker/compose/docker-compose.postgres.yml. Pinned to
+    # the current stable release, not :latest.
+    image: ghcr.io/paperless-ngx/paperless-ngx:3.0.5
+    container_name: paperless
+    environment:
+      TZ: ${TZ}
+      # Discrete host/port/user/pass/name vars -- confirmed exact names
+      # 2026-09-03 via paperless-ngx's own docs/configuration.md, NOT a
+      # single DB URL the way some apps in this fleet use.
+      PAPERLESS_DBENGINE: postgresql
+      PAPERLESS_DBHOST: postgres-paperless
+      PAPERLESS_DBPORT: "5432"
+      PAPERLESS_DBNAME: ${PAPERLESS_DB_DATABASE_NAME}
+      PAPERLESS_DBUSER: ${PAPERLESS_DB_USERNAME}
+      PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD}
+      # One URL-format var, confirmed -- DB 1 on the shared valkey/
+      # instance, reserved for paperless when that file was built.
+      PAPERLESS_REDIS: redis://valkey:6379/1
+      # Env-var-driven admin creation -- confirmed no manage.py step
+      # needed, unlike some other apps in this fleet.
+      PAPERLESS_ADMIN_USER: barista
+      PAPERLESS_ADMIN_PASSWORD: ${PAPERLESS_ADMIN_PASSWORD}
+      # Django's SECRET_KEY, generated once and pinned rather than left to
+      # auto-generate -- same reasoning as n8n's N8N_ENCRYPTION_KEY on
+      # mochaPot: a value that changes across container recreations would
+      # invalidate existing sessions/signed data.
+      PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
+      # CSRF-trusted-origins equivalent -- needed once this is reachable
+      # by a real hostname through Traefik, not just the bare LAN IP.
+      PAPERLESS_URL: http://${PERCOLATOR_LAN_IP}:8000
+    volumes:
+      - /srv/data/paperless/data:/usr/src/paperless/data
+      - /srv/data/paperless/media:/usr/src/paperless/media
+      - /srv/data/paperless/export:/usr/src/paperless/export
+      - /srv/data/paperless/consume:/usr/src/paperless/consume
+    networks:
+      - percolator_net
+    restart: unless-stopped
+    # Known gaps, not fixed here (2026-09-03):
+    # - gotenberg/tika (document format conversion + text extraction for
+    #   non-PDF office formats) are in paperless-ngx's own reference
+    #   compose as separate services -- not included here yet, only
+    #   researched as existing, not actually configured. PDF-only
+    #   consumption works without them.
+    # - OCR languages beyond English need the corresponding tesseract-ocr
+    #   language packs, which aren't all bundled in this base image --
+    #   confirmed via paperless-ngx's own docs, needs a custom image layer
+    #   or the -languages image variant if non-English OCR is needed.
+    # - Consumption-dir polling: /srv/data/paperless/consume is on
+    #   percolator's own local NVMe, not a network mount, so inotify
+    #   (the default) should work fine -- PAPERLESS_CONSUMER_POLLING_INTERVAL
+    #   only matters if that ever changes to a network-backed path.

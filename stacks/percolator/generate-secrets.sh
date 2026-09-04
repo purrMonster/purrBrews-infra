@@ -91,19 +91,43 @@ prompt_if_placeholder() {
 }
 
 # --- Per-app secrets go here ------------------------------------------
-# One set_if_absent call per secret value, added as each app gets built —
-# see stacks/silo/generate-secrets.sh's own per-app section for real
-# worked examples (netalertx/speedtest-tracker/komodo). Nothing here yet:
-# percolator has no apps built out as of 2026-09-02.
-#
-#   set_if_absent "${DIR}/somesvc/secrets.env.local" "SOME_PASSWORD" "$(rand 16)"
-#
-# For a value that can't be randomly generated (an API token, etc.), use
-# prompt_if_placeholder instead:
-#
-#   prompt_if_placeholder "${DIR}/somesvc/secrets.env.local" "SOME_API_TOKEN" \
-#     "Some service API token" "REPLACE_ME_some_api_token" --secret
-# ------------------------------------------------------------------------
+
+# One file for all 4 instances -- matches the single postgres/docker-
+# compose.yml serving all 4.
+log "postgres/secrets.env.local"
+set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_USERNAME" "immich"
+set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_DATABASE_NAME" "immich"
+set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_USERNAME" "homeassistant"
+set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_DATABASE_NAME" "homeassistant"
+set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_USERNAME" "nextcloud"
+set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_DATABASE_NAME" "nextcloud"
+set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_USERNAME" "paperless"
+set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_DATABASE_NAME" "paperless"
+
+# valkey/ has no secrets.env.local of its own -- no auth configured (see
+# that compose file's own comment: matches Immich's and Paperless-ngx's
+# own official compose files, internal-network trust only, never exposed
+# past percolator_net). Nothing to generate there.
+
+log "nextcloud/secrets.env.local"
+set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_ADMIN_PASSWORD" "$(rand 16)"
+
+log "paperless/secrets.env.local"
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_ADMIN_PASSWORD" "$(rand 16)"
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_SECRET_KEY" "$(rand 32)"
+
+# homeassistant/ has no secrets.env.local -- no compose-level DB config
+# exists for HA (see homeassistant/docker-compose.yml's own comment: the
+# recorder DB is configuration.yaml-only, provisioned manually after first
+# boot, not through this script). traefik/ also has none -- ForwardAuth's
+# only per-node value is SIEVE_LAN_IP, which lives in .env.local (not a
+# secret) since render-configs.sh needs it at template-render time, not
+# generate-secrets.sh.
+# --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true
 
@@ -118,7 +142,7 @@ for f in "${DIR}"/*/secrets.env.local; do
 done
 
 if [[ ${#still_needed[@]} -eq 0 ]]; then
-  echo "Done — nothing to generate yet (percolator has no apps with secrets)."
+  echo "Done — nothing still needs a real value."
 else
   echo "Done, but these still need a real value — re-run this script anytime"
   echo "you have them (or edit the file directly):"

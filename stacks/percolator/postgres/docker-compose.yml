@@ -1,0 +1,118 @@
+services:
+  postgres-immich:
+    # NOT generic pgvector/pgvector -- Immich ships and requires its own
+    # maintained image. Confirmed 2026-09-03 against immich-app/immich's
+    # current main-branch docker/docker-compose.yml AND its "pre-existing
+    # postgres" docs (docs.immich.app/administration/postgres-standalone):
+    # pgvecto.rs support was dropped in Immich v3.0 -- it needs VectorChord
+    # specifically now, not plain pgvector. Generic pgvector/pgvector would
+    # look like it works, then fail on Immich's own migrations.
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    container_name: postgres-immich
+    environment:
+      POSTGRES_USER: ${IMMICH_DB_USERNAME}
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
+      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
+      # From Immich's own current compose, verbatim -- not invented here.
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - /srv/data/postgres-immich:/var/lib/postgresql/data
+    # Immich's own docs are explicit: DB storage must be local disk, never
+    # a network share (NFS/SMB) -- confirmed before assuming /srv/data here
+    # was safe for this one specifically. percolator's own NVMe/SSD, not
+    # cellar's NFS -- consistent with every other DB in this layer.
+    shm_size: 128mb
+    networks:
+      - percolator_net
+    # Published to the LAN (2026-09-03, corrected from the original
+    # internal-only design) -- Immich's SERVER component lives on
+    # mochaPot, a different physical host, and needs to reach this
+    # cross-node. Docker networks don't span hosts, so this is the only
+    # way. Scoped in ufw to mochaPot's LAN IP specifically, not the whole
+    # subnet -- tighter than most of this fleet's ufw rules, since this
+    # is direct database access, not a web UI.
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    # Known gap, not fixed here (2026-09-03): a community vuln scan flagged
+    # ~90 CVEs in this image's OS layer (immich-app/immich discussion
+    # #23211); the Immich maintainer called most of it scanner noise on
+    # unused packages and declined to change base images. Real risk is low
+    # given this container is never exposed past percolator_net, but worth
+    # knowing rather than assuming the image is clean -- see README.
+
+  postgres-homeassistant:
+    # Plain official postgres image -- no vector extension needed. Pinned
+    # to a specific major (not `latest`), matching this fleet's pin-a-real-
+    # version discipline everywhere else. HA's recorder integration talks
+    # to it directly via psycopg2, which HA already bundles -- no extra
+    # driver config needed on HA's side.
+    image: postgres:16
+    container_name: postgres-homeassistant
+    environment:
+      POSTGRES_USER: ${HA_DB_USERNAME}
+      POSTGRES_PASSWORD: ${HA_DB_PASSWORD}
+      POSTGRES_DB: ${HA_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-homeassistant:/var/lib/postgresql/data
+    networks:
+      - percolator_net
+    # Published to localhost ONLY -- Home Assistant needs network_mode:
+    # host (confirmed 2026-09-03 via Home Assistant's own Cast integration
+    # docs: mDNS-based device discovery doesn't work without it), which
+    # means it can't resolve percolator_net container DNS names the way
+    # nextcloud/paperless do -- host networking bypasses Docker's embedded
+    # DNS entirely. So HA reaches this one via 127.0.0.1:5432 instead of
+    # a hostname. Bound to loopback only, not the LAN -- HA is the only
+    # intended client, and it's on the same host.
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+
+  postgres-nextcloud:
+    image: postgres:16
+    container_name: postgres-nextcloud
+    environment:
+      POSTGRES_USER: ${NEXTCLOUD_DB_USERNAME}
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      POSTGRES_DB: ${NEXTCLOUD_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-nextcloud:/var/lib/postgresql/data
+    networks:
+      - percolator_net
+    restart: unless-stopped
+
+  postgres-paperless:
+    # Paperless-ngx's own official reference compose
+    # (docker/compose/docker-compose.postgres.yml) uses postgres:18 --
+    # matched here rather than defaulting to 16 like the other two, since
+    # this is the specific version their own maintainers test against for
+    # a fresh deploy. Nothing stops homeassistant/nextcloud from being on
+    # 18 too eventually, but no reason to churn their pins to match this
+    # one right now -- each app's own postgres version choice is
+    # independent, they don't share a server.
+    image: postgres:18
+    container_name: postgres-paperless
+    environment:
+      POSTGRES_USER: ${PAPERLESS_DB_USERNAME}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD}
+      POSTGRES_DB: ${PAPERLESS_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-paperless:/var/lib/postgresql/data
+    networks:
+      - percolator_net
+    restart: unless-stopped
+
+networks:
+  # Created idempotently by ../compose.sh before this file is ever handed
+  # to `docker compose` -- see that script's own comment for why percolator
+  # needs this at all (apps in separate compose projects reaching each
+  # other by hostname) and why it's not created here via a plain top-level
+  # `networks: percolator_net:` block instead: docker compose would then
+  # try to (re-)create/reconcile it as part of THIS project each time,
+  # which gets messy once valkey's and the consumer apps' own compose
+  # files all need to join the same network without fighting over which
+  # one "owns" it. external: true here means this file only ever joins an
+  # already-existing network, never creates or owns it.
+  percolator_net:
+    external: true
