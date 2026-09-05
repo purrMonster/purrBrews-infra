@@ -264,6 +264,26 @@ silo on port 9120, no inbound rule needed on mochaPot) — and the same
 root-equivalent caveat: whoever controls Core on silo has root-equivalent
 access to mochaPot once this is connected.
 
+### scrutiny-collector
+
+Added 2026-09-05 -- Scrutiny's own "hub and spoke" multi-host pattern,
+see `stacks/cellar/README.md`'s identical copy of this section for the
+full explanation. Fill in the real disk path first:
+
+```sh
+lsblk -d -o NAME,TYPE,SIZE,MODEL
+```
+
+into `.env.local`'s `MOCHAPOT_DISK_DEVICE_NVME` (controller node
+`/dev/nvme0`, not `/dev/nvme0n1`), then:
+
+```sh
+./compose.sh scrutiny-collector up -d
+```
+
+Same silo-side prerequisite as cellar's/percolator's copies: port 8080
+republished on silo's `scrutiny` service (done 2026-09-05).
+
 ## Known gaps / things to double-check before relying on this
 
 - The deploy-order guess in this file's intro is still unverified against

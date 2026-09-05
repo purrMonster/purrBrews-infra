@@ -165,6 +165,34 @@ silo on port 9120, no inbound rule needed on cellar) -- and same caveat
 as Komodo everywhere else in this fleet: whoever controls Core on silo
 has root-equivalent access to cellar once this is connected.
 
+### scrutiny-collector
+
+Added 2026-09-05 -- Scrutiny's own "hub and spoke" multi-host pattern
+(see `scrutiny-collector/docker-compose.yml`'s own comment): silo's
+existing omnibus Scrutiny container is the hub, this pushes cellar's
+SMART data to it over the LAN instead of running its own web UI.
+
+**Fill in real disk device paths first** -- `.env.local`'s
+`CELLAR_DISK_DEVICE_NVME`/`CELLAR_DISK_DEVICE_HDD` are placeholders,
+confirm the real values on cellar itself:
+
+```sh
+lsblk -d -o NAME,TYPE,SIZE,MODEL
+```
+
+then
+
+```sh
+./compose.sh scrutiny-collector up -d
+```
+
+Requires silo's `scrutiny` service to have its port 8080 republished
+(done 2026-09-05 -- see `stacks/silo/scrutiny/docker-compose.yml`'s own
+comment for the real security tradeoff this reopens, not a free lunch).
+Confirm cellar's disks actually show up in silo's Scrutiny UI afterward,
+distinguished by hostname -- that's the real test, not just that this
+container starts.
+
 ### backup-mirror
 
 **Not a container, deliberately.** Confirmed 2026-09-03: no well-

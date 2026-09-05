@@ -2101,3 +2101,56 @@ nslookup nextcloud.${DOMAIN}          # from sieve itself, or any LAN client -- 
 
 Not yet applied as of this entry. Once it is, all three hostnames from
 today's Traefik work should actually be reachable by name.
+
+## 2026-09-05 — multi-host Scrutiny: hub on silo, collectors on cellar/percolator/mochaPot
+
+Set up Scrutiny's own documented "hub and spoke" pattern so disk health
+is visible for every node, not just silo. Confirmed the mechanism against
+the project's own docs before writing anything: a collector-only image
+(`ghcr.io/analogj/scrutiny:<version>-collector`) runs on each additional
+host, pushing SMART data to a remote hub's API via `COLLECTOR_API_ENDPOINT`
+-- silo's existing omnibus container (web UI + API + embedded InfluxDB)
+needs no changes to serve as that hub, aside from actually being
+reachable.
+
+That last part is the real tradeoff, called out plainly rather than
+glossed over: silo's `scrutiny` service had its port 8080 publish
+deliberately REMOVED on 2026-09-04, specifically because the app has zero
+authentication of its own and a published bridge port bypasses `ufw`
+anyway (the fleet-wide Docker-NAT gap). Making the hub reachable from
+other hosts means republishing that exact port -- reopening the same
+exposure that removal was meant to close. Decided to accept this for now
+rather than block multi-host disk monitoring on first fixing the ufw gap
+fleet-wide, but flagged it explicitly in both the compose file and this
+entry, and added it back onto the weekend plan as something to actually
+resolve (via DOCKER-USER iptables rules, not another ufw rule that
+doesn't do anything) rather than let it join the pile of "known, accepted"
+gaps permanently.
+
+Built:
+- `stacks/silo/scrutiny/docker-compose.yml` -- republished `8080:8080`.
+- `stacks/{cellar,percolator,mochaPot}/scrutiny-collector/docker-compose.yml`
+  -- new. Version pinned to `v0.9.3-collector`, matching silo's own
+  `v0.9.3-omnibus` rather than the docs' generic example version, so hub
+  and collector are built from the same release. **Not yet confirmed**
+  that `v0.9.3-collector` actually exists as a published GHCR tag --
+  check before first pull, fall back to whatever version has both a
+  matching `-omnibus` and `-collector` image if not.
+- Disk device placeholders added to each of the three nodes'
+  `local.env.example` (`CELLAR_DISK_DEVICE_NVME`/`_HDD`,
+  `PERCOLATOR_DISK_DEVICE_SSD`/`_NVME`, `MOCHAPOT_DISK_DEVICE_NVME`) --
+  all `REPLACE_ME`, real values need confirming via `lsblk -d -o
+  NAME,TYPE,SIZE,MODEL` on each node itself, same discipline as silo's
+  own `SCRUTINY_DISK_DEVICE`. NVMe devices use the controller node
+  (`/dev/nvme0`), not the namespace block device (`/dev/nvme0n1`) --
+  same gotcha silo's README already flags.
+- READMEs for all three nodes, plus silo's own `scrutiny` section, and
+  `WEEKEND_PLAN.md`.
+
+Ristretto excluded, deliberately -- it boots off a microSD card, and
+`smartctl` generally can't read SMART data from SD cards the way it does
+a real SATA/NVMe/SAS disk. Nothing to collect there.
+
+Not yet brought up anywhere. Next steps: confirm real disk paths on all
+three nodes, `./compose.sh scrutiny-collector up -d` on each, confirm
+silo's Scrutiny UI actually shows every disk fleet-wide.

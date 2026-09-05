@@ -270,6 +270,26 @@ Same outbound-only connection as every other node's Periphery
 — and the same root-equivalent caveat: whoever controls Core on silo has
 root-equivalent access to percolator once this is connected.
 
+### scrutiny-collector
+
+Added 2026-09-05 -- Scrutiny's own "hub and spoke" multi-host pattern,
+see cellar's identical copy of this section (`stacks/cellar/README.md`)
+for the full explanation. Fill in real disk paths first:
+
+```sh
+lsblk -d -o NAME,TYPE,SIZE,MODEL
+```
+
+into `.env.local`'s `PERCOLATOR_DISK_DEVICE_SSD`/`PERCOLATOR_DISK_DEVICE_NVME`
+(NVMe: controller node `/dev/nvme0`, not `/dev/nvme0n1`), then:
+
+```sh
+./compose.sh scrutiny-collector up -d
+```
+
+Same silo-side prerequisite as cellar's copy: port 8080 republished on
+silo's `scrutiny` service (done 2026-09-05).
+
 ## What's here now
 
 - `compose.sh` — wrapper so every app's docker-compose.yml sees the shared

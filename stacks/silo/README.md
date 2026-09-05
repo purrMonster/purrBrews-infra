@@ -299,13 +299,28 @@ now (needs a Local DNS Record in sieve's Pi-hole first, see Known gaps).
 Worth the change more than most: this app has **no login of its own** —
 Traefik/Authelia is the only auth it has ever had, so leaving it on a
 ufw-bypassable published port would have meant no real protection at
-all, not just a redundant second layer the way it is for netalertx. If
-`traefik` isn't up yet, temporarily add `ports: ["8081:8080"]` back for
-one-off access.
+all, not just a redundant second layer the way it is for netalertx.
+
+**Port 8080 republished again, 2026-09-05** — this time deliberately, as
+a hub for `cellar`'s/`percolator`'s/`mochaPot`'s own `scrutiny-collector`
+containers (Scrutiny's official multi-host "hub and spoke" pattern — one
+web+API+InfluxDB instance, everything else runs just the lightweight
+collector, pushing to this instance's API over the LAN). Browser access
+still goes through Traefik unchanged; this port is for collector-to-hub
+traffic only, and reopens the exact zero-auth exposure the 2026-09-04
+change closed — accepted deliberately for now, see the runbook's
+2026-09-05 entry and this compose file's own comment for the full
+tradeoff. `ufw allow from <cellar/percolator/mochaPot's LAN IPs> to any
+port 8080 proto tcp` is worth adding for hygiene, but doesn't actually
+restrict anything today (Docker-NAT-bypasses-ufw, same fleet-wide gap as
+Komodo's 9120).
 
 Confirm it actually sees your disks (not just that the container
 started): open the UI and check every physical disk shows up with real
-S.M.A.R.T. data, not an error/missing state.
+S.M.A.R.T. data, not an error/missing state. Once `cellar`/`percolator`/
+`mochaPot` each bring up their own `scrutiny-collector` (see each stack's
+own README), their disks should show up in this same UI too, distinguished
+by hostname.
 
 ### diun
 

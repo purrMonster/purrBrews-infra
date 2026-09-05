@@ -1,0 +1,32 @@
+services:
+  scrutiny-collector:
+    # Collector-only image, NOT the omnibus one silo runs -- Scrutiny's
+    # own documented "hub and spoke" pattern, see cellar's identical copy
+    # of this file for the full explanation. Version pinned to match
+    # silo's own omnibus tag (v0.9.3) -- confirm this exact tag exists on
+    # GHCR before first pull.
+    image: ghcr.io/analogj/scrutiny:v0.9.3-collector
+    container_name: scrutiny-collector
+    cap_add:
+      - SYS_RAWIO   # smartctl access for SATA/SAS drives
+      - SYS_ADMIN   # smartctl access for NVMe drives
+    environment:
+      # Pushes to silo's omnibus container's API, over the LAN -- requires
+      # silo's scrutiny service to republish port 8080 (done 2026-09-05,
+      # see that compose file's own comment for the tradeoff).
+      COLLECTOR_API_ENDPOINT: http://${SILO_LAN_IP}:8080
+    volumes:
+      - /run/udev:/run/udev:ro
+    devices:
+      # Percolator has TWO physical fast disks per initiation.txt (256GB
+      # SSD + 1TB NVMe) -- confirm the REAL device paths on percolator
+      # itself before first bring-up, same discipline as silo's own
+      # SCRUTINY_DISK_DEVICE:
+      #   lsblk -d -o NAME,TYPE,SIZE,MODEL
+      # For the NVMe, use the controller node (/dev/nvme0), NOT the
+      # namespace block device (/dev/nvme0n1).
+      - ${PERCOLATOR_DISK_DEVICE_SSD}
+      - ${PERCOLATOR_DISK_DEVICE_NVME}
+    restart: unless-stopped
+    # No web UI, no port to publish -- this container only ever makes
+    # outbound requests to silo.

@@ -16,15 +16,37 @@ services:
       - SYS_ADMIN   # smartctl access for NVMe drives — drop this if silo
                     # genuinely has no NVMe (narrower capability grant),
                     # but harmless to leave if unsure.
-    # No ports: mapping as of 2026-09-04 -- was "8081:8080" until then.
-    # Docker's own iptables DNAT for published bridge-network ports
-    # bypasses ufw entirely (confirmed on silo's Komodo port -- see the
-    # runbook's 2026-09-04 entry), and this app has zero auth of its own
-    # (see Known gaps), so a ufw-only "fix" would have been no fix at
-    # all. Reachable now only via silo's Traefik (silo_net, container
-    # DNS, internal port 8080 unchanged). InfluxDB's admin port (8086)
-    # was never published either way -- the omnibus image talks to its
-    # own embedded InfluxDB over localhost inside the container.
+    # Port 8080 republished as of 2026-09-05 -- was removed 2026-09-04
+    # (see below for why), reinstated for a real reason: this is now the
+    # HUB for cellar's/percolator's/mochaPot's own scrutiny-collector
+    # containers (see each of those stacks' own scrutiny-collector/
+    # docker-compose.yml), which need to reach this omnibus container's
+    # API over the LAN to push their SMART data -- Docker networks don't
+    # span physical hosts, same reasoning as every other cross-host
+    # exception in this fleet (Komodo's 9120, Authelia's 9091).
+    #
+    # This REOPENS the exact problem 2026-09-04 closed: this app has zero
+    # auth of its own (see Known gaps below), and Docker's own iptables
+    # DNAT for published bridge-network ports bypasses ufw entirely
+    # (confirmed on silo's Komodo port, see the runbook's 2026-09-04
+    # entry) -- so the ufw rule below is, as of this writing, NOT actually
+    # restricting anything, same caveat as every other port in this
+    # fleet affected by that gap. Accepted deliberately for now (2026-09-05
+    # decision, see that day's runbook entry) rather than blocking the
+    # multi-host Scrutiny setup on first fixing the ufw gap fleet-wide --
+    # but that gap fix, whenever it happens (DOCKER-USER iptables rules,
+    # not plain ufw), should scope this port to cellar's/percolator's/
+    # mochaPot's specific LAN IPs for real, the way the ufw rule below
+    # only pretends to today.
+    #
+    # Traefik/silo_net routing (container DNS, internal port 8080)
+    # continues to work unchanged for browser access -- this port
+    # publish is additive, for collector-to-hub traffic only, not a
+    # replacement for it. InfluxDB's admin port (8086) still isn't
+    # published -- the omnibus image talks to its own embedded InfluxDB
+    # over localhost inside the container regardless.
+    ports:
+      - "8080:8080"
     volumes:
       - /srv/data/scrutiny/config:/opt/scrutiny/config
       - /srv/data/scrutiny/influxdb:/opt/scrutiny/influxdb
@@ -50,9 +72,14 @@ services:
     # No login/auth exists in this app at all — not a documented "put it
     # behind your own auth" design choice, just genuinely absent (no
     # README section on it, no CVEs on file either — checked, not
-    # assumed). Now routed through silo's Traefik/Authelia (see the
-    # ports: comment above and README) -- that's the only auth this app
-    # has, since it has none of its own.
+    # assumed). Browser access is gated by silo's Traefik/Authelia (see
+    # the port-republish comment above and README) -- that's the only
+    # auth this app has for a person visiting it. The republished 8080
+    # port (collector-to-hub traffic) has NO such gate at all -- anything
+    # that can reach silo on 8080 can push fake SMART data or read real
+    # data, same zero-auth reality as before, just now reachable from more
+    # places. Acceptable on a trusted LAN today, not acceptable the day
+    # this port is ever reachable from anywhere less trusted.
 
 networks:
   default:
