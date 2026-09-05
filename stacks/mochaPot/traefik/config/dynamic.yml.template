@@ -1,10 +1,116 @@
-# Placeholder -- intentionally empty of real routers. Confirmed 2026-09-03:
-# this exists only so the bind mount in ../docker-compose.yml has a real
-# file to mount (a missing source path gets created as a directory by
-# Docker, which would break Traefik's file provider) -- NOT because
-# routing is configured yet. Per initiation.txt Section 18.6, mochaPot's
-# Traefik comes up last, after every other app here is confirmed healthy
-# on its own published port. Add real `http.routers`/`http.middlewares`
-# entries (same ForwardAuth-to-sieve's-Authelia pattern as
-# stacks/percolator/traefik/config/dynamic.yml.template) once that's
-# actually happening, not before.
+## Rendered by ../../render-configs.sh from this .template -- edit the
+## .template, never the rendered dynamic.yml (it gets overwritten).
+##
+## Real routers as of 2026-09-06 -- this file used to be an intentionally
+## empty placeholder (existed only so the bind mount had a real file to
+## mount) until every other mochaPot app was confirmed healthy on its own
+## published port, per initiation.txt Section 18.6's sequencing. That's
+## now done (except jellyfin, moved to roastery 2026-09-05 -- not routed
+## here, it has its own LAN-reachable port directly on roastery).
+##
+## No providers.docker on this node (see traefik.yml.template's own
+## comment) -- every router below needs an explicit `services:` entry
+## too, unlike percolator's label-driven setup where Traefik auto-creates
+## the service from traefik.enable labels. Backend URLs point at
+## ${MOCHAPOT_LAN_IP}:<published-port>, not container names -- there's no
+## shared Docker network to reach these apps by name from inside the
+## Traefik container.
+http:
+  middlewares:
+    authelia:
+      forwardAuth:
+        # Same address/pattern as percolator's identical copy of this
+        # middleware -- see that file's own comment for the full "why a
+        # direct hop to sieve, not through a second Traefik" reasoning.
+        # Defined here but NOT attached to any router below, same
+        # deliberate deferral as percolator's three apps: whether each of
+        # these gets ForwardAuth layered on top of its own native login
+        # is a real choice to make later, not a default to silently
+        # apply. See README.md's Known gaps.
+        address: "http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - Remote-User
+          - Remote-Groups
+          - Remote-Email
+          - Remote-Name
+
+  routers:
+    vikunja:
+      rule: "Host(`vikunja.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: vikunja
+    n8n:
+      rule: "Host(`n8n.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: n8n
+    freshrss:
+      rule: "Host(`freshrss.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: freshrss
+    mealie:
+      rule: "Host(`mealie.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: mealie
+    actualbudget:
+      rule: "Host(`actualbudget.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: actualbudget
+    stirlingpdf:
+      rule: "Host(`stirlingpdf.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: stirlingpdf
+    roundcube:
+      rule: "Host(`roundcube.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: roundcube
+    immich:
+      rule: "Host(`immich.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: immich
+    musicassistant:
+      rule: "Host(`musicassistant.${DOMAIN}`)"
+      entrypoints: [websecure]
+      service: musicassistant
+
+  services:
+    vikunja:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:3456"
+    n8n:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:5678"
+    freshrss:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:8090"
+    mealie:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:9925"
+    actualbudget:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:5006"
+    stirlingpdf:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:8080"
+    roundcube:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:8091"
+    immich:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:2283"
+    # network_mode: host, same as percolator's Home Assistant -- no
+    # container-network IP for a docker provider to find anyway, and this
+    # node has none configured regardless. Port confirmed via this
+    # stack's own README (Music Assistant section).
+    musicassistant:
+      loadBalancer:
+        servers:
+          - url: "http://${MOCHAPOT_LAN_IP}:8095"

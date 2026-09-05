@@ -1,0 +1,53 @@
+## Rendered by ../../render-configs.sh from this .template -- edit the
+## .template, never the rendered traefik.yml (it gets overwritten).
+##
+## Added 2026-09-06, adapted from stacks/percolator/traefik/config/
+## traefik.yml.template -- same real-HTTPS-required-for-Authelia
+## reasoning (see this stack's docker-compose.yml comment), same
+## Cloudflare DNS-01 mechanism, same entrypoint layout.
+##
+## ONE deliberate difference from percolator's copy: no `providers.docker`
+## block. mochaPot's apps don't share a Docker network the way
+## percolator's data-layer-bound apps do, and most already publish their
+## own host port -- routing goes entirely through the file provider,
+## with real router+service pairs hand-written in dynamic.yml.template
+## (pointing at ${MOCHAPOT_LAN_IP}:<port>), not traefik.enable=true
+## labels on each app's own compose file. Adding traefik.enable labels to
+## mochaPot's apps would silently do nothing without providers.docker
+## configured -- don't add them expecting label-based routing to work
+## here the way it does on percolator.
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+    http:
+      tls:
+        certResolver: cloudflare
+
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+
+certificatesResolvers:
+  cloudflare:
+    acme:
+      email: admin@${DOMAIN}
+      storage: /letsencrypt/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "1.0.0.1:53"
+
+api:
+  dashboard: false
+
+log:
+  level: INFO

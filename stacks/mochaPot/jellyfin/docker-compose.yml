@@ -1,37 +1,17 @@
-services:
-  jellyfin:
-    # Current stable per GitHub releases, confirmed 2026-09-03 -- NOT the
-    # 12.0-rc7 pre-release "next-gen" tag that also exists on DockerHub.
-    image: jellyfin/jellyfin:10.11.11
-    container_name: jellyfin
-    ports:
-      - "8096:8096"
-      - "7359:7359/udp"
-    devices:
-      # Intel Quick Sync passthrough -- confirmed 2026-09-03 via Jellyfin's
-      # own hardware-acceleration docs.
-      - /dev/dri/renderD128:/dev/dri/renderD128
-    group_add:
-      # Confirmed gotcha: device passthrough ALONE isn't enough -- the
-      # container's user must also be in the host's `render` group (name
-      # varies by distro, sometimes `video`) or transcoding silently
-      # falls back to software with no error. Find the real GID on
-      # mochaPot with: getent group render | cut -d: -f3
-      - "${MOCHAPOT_RENDER_GID}"
-    volumes:
-      - /srv/data/jellyfin/config:/config
-      # Transcode scratch space -- local NVMe, not NFS, confirmed this
-      # matters for latency.
-      - /srv/data/jellyfin/cache:/cache
-      # Placeholder bind mount -- cellar's NFS export isn't set up yet
-      # (see stacks/cellar/README.md's smb/ section). Swap this for a
-      # real NFS mount once that exists; local bind is a stopgap so
-      # Jellyfin can at least be brought up and tested against whatever's
-      # copied here manually in the meantime.
-      - /srv/media:/media
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      TZ: ${TZ}
-    restart: unless-stopped
-    # No default credentials -- first-run setup wizard, confirmed via
-    # Jellyfin's own docs.
+# MOVED 2026-09-05 -- Jellyfin no longer lives on mochaPot. See
+# stacks/roastery/jellyfin/docker-compose.yml for the real file, and this
+# repo's runbook.md / initiation.txt (Section 0.3's Container reallocation
+# paragraph) for the full reasoning: Quick Sync struggled decoding video
+# in an earlier real deployment (user's own report, on percolator's
+# same-generation iGPU), and roastery's RTX 3080 -- with GPU passthrough
+# already confirmed working the same day -- is a materially stronger
+# transcode path. Every other mochaPot app is unaffected; this was a
+# single-app move, not a re-scoping of the node.
+#
+# Deliberately left as a non-functional stub rather than deleted --
+# device-bridge sandbox tooling can't delete files in this repo. Run
+# `git rm -r stacks/mochaPot/jellyfin` yourself to actually remove this
+# directory once you've confirmed roastery's copy is what you want to
+# keep. This file has no `services:` key on purpose, so `./compose.sh
+# jellyfin up -d` fails loudly here instead of silently starting the old
+# Quick-Sync config again.

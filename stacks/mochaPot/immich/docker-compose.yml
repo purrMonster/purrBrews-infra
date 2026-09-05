@@ -47,13 +47,18 @@ services:
       valkey:
         condition: service_healthy
     restart: unless-stopped
-    # Known gap, not resolved here (2026-09-03, still true 2026-09-05):
-    # ROASTERY_TAILNET_IP isn't in local.env.example yet -- roastery's ML
-    # worker isn't built/running yet either (per initiation.txt, it's
-    # Ollama + GPU-accelerated Immich ML worker, reachable only via the
-    # Headscale tailnet, no public exposure). Fill in once that's actually
-    # stood up on roastery; Immich runs fine without it, just does
-    # inference in software/CPU fallback (or not at all) until then.
+    # Updated 2026-09-05: roastery's ML worker now exists --
+    # stacks/roastery/immich-ml/docker-compose.yml, built the same day.
+    # ROASTERY_TAILNET_IP is now a real key in local.env.example (was a
+    # dangling comment-only reference before this fix -- caught while
+    # wiring this up for real). Still requires two things to happen
+    # before this URL actually resolves to anything: (1) roastery gets
+    # enrolled in the fleet's Headscale tailnet (a manual step only
+    # doable on roastery itself -- see its own README), and (2) this
+    # node's .env.local gets the real ROASTERY_TAILNET_IP value filled
+    # in. Until both are done, Immich runs fine without ML -- inference
+    # is simply unconfigured (not a broken fallback, just off) until this
+    # resolves to a real, reachable address.
 
   postgres-immich:
     # Moved here from percolator, 2026-09-05 -- see the runbook's

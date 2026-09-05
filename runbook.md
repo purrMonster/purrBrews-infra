@@ -2275,3 +2275,318 @@ If you need a manual trigger before the next `up -d`, check what's
 actually inside the collector container first (`docker exec
 scrutiny-collector ls /opt/scrutiny/bin/` or similar) rather than trust
 an unverified path.
+
+## 2026-09-05 — roastery: built the Immich ML worker (first-ever app on this node)
+
+User: "immich ML needs to be on roastery." mochaPot's `immich/docker-compose.yml`
+has pointed `IMMICH_MACHINE_LEARNING_URL` at `${ROASTERY_TAILNET_IP}:3003`
+since 2026-09-03, but nothing on roastery's side ever existed to answer
+that address — this closes that gap.
+
+New directory: `stacks/roastery/` (first-ever app built on this node).
+`compose.sh`, `render-configs.sh`, `setup-secrets.sh`, `generate-secrets.sh`
+copied from silo's versions and adapted; `immich-ml/docker-compose.yml`
+written fresh. One caught mistake worth flagging: `setup-secrets.sh` was
+initially produced via a mechanical `sed -i 's/silo/roastery/g'` on
+silo's own file, which left silo's *real history* in the header comment
+(a Homepage host-validation bug, a SOPS+age migration) narrated as if it
+happened on roastery — it never did, this is roastery's first script.
+Caught before commit and rewritten with an honest header (no fabricated
+history, just what this file actually does and why it was copied).
+
+Two decisions made building this, both flagged to the user rather than
+assumed silently:
+
+1. **Headscale namespace**: enrolling roastery under `barista` (the
+   fleet-server namespace, same as sieve/silo/cellar/percolator/mochaPot)
+   rather than `penguin` (personal-device namespace). No functional
+   difference today — no ACL policy exists yet (confirmed by reading
+   `headscale-bootstrap.sh` in full) — but the organizational choice
+   should be a real decision, not a default nobody noticed. Easy to redo
+   later if wrong.
+2. **Model-cache path**: a plain relative bind mount
+   (`./model-cache:/cache`) rather than inventing a new global
+   `$DATA_DIR`-style convention for roastery. No such convention exists
+   for this node (Section 19.4's `$DATA_DIR/<appname>` pattern is
+   Linux-fleet-specific) and this is the first app here — didn't want to
+   invent fleet-wide policy off one app's needs.
+
+**Security-driven port binding**: immich-ml's port 3003 is bound to
+`${ROASTERY_TAILNET_IP}` specifically, not `0.0.0.0` — confirmed via
+Immich's own remote-machine-learning docs
+(docs.immich.app/guides/remote-machine-learning/) that this container
+"has no security measures whatsoever" (no auth, no API key at all). The
+tailnet-only binding is the entire mitigation, matching initiation.txt's
+own Risk R9/R10 framing for this node (tailnet-only, no public exposure).
+This also means `docker compose up` will refuse to start the service
+until `ROASTERY_TAILNET_IP` is a real address already assigned to an
+interface — i.e., Headscale enrollment has to happen before bring-up,
+which is the correct order anyway, not an accident of the binding choice.
+
+**initiation.txt correction, found not fixed**: the doc lists roastery's
+stack as needing "NVIDIA Container Toolkit." Immich's own current
+hardware-acceleration docs
+(docs.immich.app/features/ml-hardware-acceleration/) say Windows/WSL2
+only needs the NVIDIA driver itself (>=545, CUDA >=12.3) — Docker
+Desktop's built-in WSL2 GPU support covers the rest, no separate Container
+Toolkit package. Flagged in `stacks/roastery/README.md`, not edited into
+`initiation.txt` itself — same standing discipline as the cellar-disk
+mismatch found 2026-09-05 earlier the same day.
+
+**Bug caught in an existing file while wiring this up**: mochaPot's
+`local.env.example` had a whole comment block about `ROASTERY_TAILNET_IP`
+since 2026-09-03, but never actually declared the key itself — the
+compose file referenced a variable that `local.env.example` only talked
+about, never set (would have silently expanded to empty string). Fixed by
+adding the real `ROASTERY_TAILNET_IP=REPLACE_ME` line.
+
+Manual, roastery-side steps this can't do from here (device-bridge
+sandbox has no Docker, no GPU visibility, no ability to run `tailscale
+up`) — all documented in `stacks/roastery/README.md`:
+
+```sh
+# on sieve, generate a pre-auth key for the (already-existing) barista user
+sudo docker exec headscale headscale preauthkeys create --user barista --expiration 1h
+
+# on roastery, in WSL2
+sudo tailscale up --login-server=https://headscale.${DOMAIN} --authkey=<key>
+tailscale ip -4                       # this is ROASTERY_TAILNET_IP
+
+cd stacks/roastery
+chmod +x *.sh
+./setup-secrets.sh                    # fill in ROASTERY_TAILNET_IP when prompted
+
+nvidia-smi                            # confirm driver >=545
+docker run --rm --gpus all nvidia/cuda:12.3.1-base-ubuntu22.04 nvidia-smi   # confirm GPU passthrough works
+
+./compose.sh immich-ml up -d
+```
+
+Then, on mochaPot's Immich Admin UI (Administration → Settings → Machine
+Learning Settings), confirm the URL and set a job-concurrency cap per
+Risk R10 — not something a compose file can pre-configure.
+
+### Still open
+
+- `immich-machine-learning:v3.0.2-cuda` image tag not confirmed against a
+  real `docker pull` — Immich's own tag scheme strongly suggests it
+  exists (every image in a release gets matching tags) but this wasn't
+  checked against the live registry before writing the compose file.
+- GPU reservation (`deploy.resources.reservations.devices`) untested
+  against real hardware — first real test is whatever bring-up happens
+  next.
+- Job concurrency cap (Risk R10) has to be set by hand in the Admin UI —
+  nothing in the compose file enforces it.
+- No `deploy.resources.limits` set on immich-ml yet, despite
+  initiation.txt's "resource-capped so gaming isn't affected" framing for
+  this node generally — worth adding once real GPU/CPU usage under an
+  actual scan is observed, not guessed now.
+- Ollama (initiation.txt's other planned roastery app) not built.
+
+## 2026-09-05 — roastery: no GPU-support toggle in Docker Desktop (self-correction)
+
+Earlier the same day's roastery-build entry (and the README/compose
+comments it produced) claimed Docker Desktop has a GPU-support toggle in
+Settings — invented, not verified. User went looking for it and correctly
+reported it isn't there. Checked docs.docker.com/desktop/features/gpu/
+directly this time: there is no such toggle. GPU support on Windows/WSL2
+is automatic once three prerequisites hold — WSL2 backend enabled
+(Settings → General → "Use the WSL 2 based engine", on by default), a
+current NVIDIA driver installed on Windows itself (not inside WSL2) that
+supports WSL2 GPU Paravirtualization, and WSL2's own kernel updated
+(`wsl --update` from an elevated PowerShell). Verification is unchanged:
+`docker run --rm --gpus all nvidia/cuda:12.3.1-base-ubuntu22.04
+nvidia-smi` should print the RTX 3080.
+
+Fixed in `stacks/roastery/README.md`'s "Bringing immich-ml up" section,
+`stacks/roastery/immich-ml/docker-compose.yml`'s GPU-reservation comment,
+and `initiation.txt`'s roastery-stack correction note (which had repeated
+the same wrong claim). Lesson: a plausible-sounding Docker Desktop UI
+element isn't the same as one confirmed against the product's own current
+docs — should have checked docs.docker.com directly the first time
+instead of describing typical settings-panel language from memory.
+
+## 2026-09-05 — Jellyfin moved from mochaPot to roastery
+
+User, mid-way through tonight's mochaPot bring-up planning: "I don't want
+to bring jellyfin up on mochaPot. roastery seems like a better fit for
+it. Last time I brought jellyfin up on percolator, it struggled a lot
+decoding videos." A real, lived experience overriding a documented plan
+— initiation.txt Section 0.3 explicitly said "percolator and mochaPot
+both keep hardware transcode capability... so Jellyfin staying on
+mochaPot is about kiosk locality, not CPU necessity." That reasoning
+assumed Quick Sync would be adequate; the user's own prior deployment
+says otherwise, on the same chip generation mochaPot uses.
+
+Moved Jellyfin to roastery instead — its RTX 3080 does NVENC/NVDEC
+hardware transcoding, a materially stronger path than any 7th-gen Quick
+Sync iGPU in this fleet, and GPU passthrough via Docker Desktop's WSL2
+integration was already confirmed working earlier the same evening
+(immich-ml's `nvidia-smi` test, both in PowerShell and inside a
+container). This was a single-app move — mochaPot keeps every other
+originally-planned app.
+
+Work done:
+- `stacks/mochaPot/jellyfin/docker-compose.yml` replaced with a
+  non-functional stub (comment-only, no `services:` key) — device-bridge
+  tooling can't delete files, so `git rm -r stacks/mochaPot/jellyfin` is
+  still needed from the user's own terminal.
+- `stacks/roastery/jellyfin/docker-compose.yml` written fresh: same
+  pinned image (`jellyfin/jellyfin:10.11.11`) and port layout as the old
+  mochaPot file, but GPU reservation instead of `/dev/dri` Quick Sync
+  passthrough — `deploy.resources.reservations.devices` with
+  `capabilities: [gpu, video, compute, utility]` (wider than immich-ml's
+  `[gpu]`-only, since NVENC/NVDEC needs the `video` capability
+  specifically) plus `NVIDIA_DRIVER_CAPABILITIES: all` as a belt-and-
+  suspenders env var. NOT yet tested against a real bring-up.
+- `stacks/roastery/local.env.example` gained `ROASTERY_MEDIA_PATH`
+  (REPLACE_ME) — the WSL2 path to the user's real media library. No
+  fleet convention exists for this (personal data placement, not
+  something to guess), so left as a real placeholder like every other
+  per-node fact in this project (LAN IPs, disk devices, etc.).
+- `stacks/roastery/.gitignore` gained `jellyfin/cache/*` (config/* was
+  already covered by the existing generic `*/config/*` rule).
+- `stacks/roastery/README.md` gained a full Jellyfin section (bring-up
+  steps, and — same discipline as immich-ml's Risk R10 section — an
+  explicit "confirm NVENC is actually being used, not silently falling
+  back to CPU" check, since that silent-fallback failure mode is
+  plausibly exactly what made Quick Sync on percolator disappointing
+  without ever throwing a visible error).
+- `stacks/mochaPot/README.md`'s Jellyfin section replaced with a pointer
+  to roastery's; Known gaps updated.
+- `initiation.txt` Section 0.3 got a dated correction paragraph
+  (following the same pattern as the earlier per-app-Postgres correction)
+  rather than silently rewriting the original "kiosk locality" line —
+  that tradeoff (losing server/kiosk co-location) is named explicitly as
+  traded away, not evaluated as to whether it's actually noticeable.
+- `WEEKEND_PLAN.md` — split the old `jellyfin, musicassistant` bullet
+  (musicassistant stays on mochaPot, jellyfin struck through with a
+  pointer to the new §2c checklist for roastery).
+
+### Still open
+
+- GPU reservation for Jellyfin specifically (wider capability set than
+  immich-ml's) hasn't been tested against real hardware.
+- `ROASTERY_MEDIA_PATH` is an unfilled placeholder — no media has been
+  copied or migrated anywhere yet.
+- Whether losing mochaPot's kiosk-locality benefit is actually noticeable
+  in daily use — not evaluated, just named as a known tradeoff.
+- `stacks/mochaPot/jellyfin/` still needs a manual `git rm -r` — left as
+  a stub, not deleted.
+
+## 2026-09-05 — mochaPot: Vikunja and n8n crash-looped on root-owned bind mounts
+
+User brought up nine of mochaPot's apps in one pass. Two of them
+(Vikunja, n8n) came up crash-looping instead of healthy:
+
+- Vikunja: `Could not init file handler: storage validation failed:
+  failed to create test file: ... permission denied
+  [process uid=1000 gid=0, dir owner uid=0 gid=0]` — the log line itself
+  names both sides of the mismatch.
+- n8n: `Error: EACCES: permission denied, open '/home/node/.n8n/config'`.
+
+Same root cause for both, and it's a real gap in how these two apps'
+`docker-compose.yml` files were written, not bad luck: neither file had a
+`mkdir` step before `up -d` the way Immich's does
+(`sudo mkdir -p /srv/data/immich /srv/data/postgres-immich`). Without
+that, Docker auto-creates a missing bind-mount source directory itself,
+as `root:root`, mode 755. Immich's own container evidently runs as root
+(or otherwise self-fixes ownership), so this never bit it — but Vikunja's
+image runs as a fixed `uid=1000, gid=0` (confirmed straight from its own
+error log) and the official n8n image runs as its `node` user,
+`uid/gid 1000:1000` (a well-documented n8n gotcha — confirmed against
+techoverflow.net's writeup and n8n-io/n8n#1240, not just recalled from
+memory). Neither image's entrypoint chowns the bind mount for you the way
+some LinuxServer.io-style images with PUID/PGID do.
+
+Fixed live, no data lost (both were failing before ever writing anything
+real):
+
+```sh
+sudo chown -R 1000:0 /srv/data/vikunja/db /srv/data/vikunja/files
+sudo docker restart vikunja
+
+sudo chown -R 1000:1000 /srv/data/n8n
+sudo docker restart n8n
+```
+
+Fixed in the repo so a future redeploy doesn't repeat this: both
+`stacks/mochaPot/vikunja/docker-compose.yml`'s and
+`stacks/mochaPot/n8n/docker-compose.yml`'s sections in
+`stacks/mochaPot/README.md` now include the `mkdir`+`chown` steps
+up front, with the reasoning inline.
+
+### Still open
+
+- Mealie, FreshRSS, Actual Budget, Stirling PDF, and Roundcube were
+  brought up the same session and were NOT individually re-checked for
+  this same failure mode. `sudo docker ps` on mochaPot (look for anything
+  cycling through `Restarting`) is the fast check; none of their compose
+  files have a preemptive `chown` step added yet.
+- Worth a fleet-wide pass at some point: any other app, on any node,
+  whose compose file publishes a bind mount without an explicit
+  `mkdir`+known-good-ownership step ahead of first `up -d` is exposed to
+  this same class of bug if its image happens to run as a fixed non-root
+  user. Not audited here — this entry only covers what was actually hit
+  tonight.
+
+## 2026-09-06 — mochaPot: Traefik brought up, real HTTPS, nine apps routed
+
+User asked, bringing Traefik up: "pihole config is already done?" — no,
+it wasn't. `pihole-dns-bootstrap.sh`'s `HOST_TARGETS` had sieve's own
+four hostnames, silo's five, cellar's vault, and percolator's three, but
+nothing for mochaPot yet. Added it this time BEFORE bringing Traefik up,
+not after — percolator's `DNS_PROBE_FINISHED_NXDOMAIN` detour on
+2026-09-05 was exactly this step done out of order, and the whole point
+of catching it once is not needing to rediscover it.
+
+Also asked (in the same turn, before building): whether mochaPot's
+Traefik should get real HTTPS like every other node, or stay plain HTTP
+since it's all LAN-internal. Chose real HTTPS, matching the fleet-wide
+pattern — switched `mochaPot/traefik/docker-compose.yml` from its
+original inline `command:` block (port 80 only) to a static
+`traefik.yml` with Cloudflare DNS-01, same mechanism as sieve/silo/
+cellar/percolator. Not required for Authelia here yet (ForwardAuth isn't
+wired to any router — see below), but proactive: percolator's Traefik
+hit a hard wall discovering this requirement only after apps were
+already routed through it, worth not repeating.
+
+**Real architectural difference from percolator's Traefik, worth being
+explicit about**: mochaPot has no `providers.docker`. Its apps don't
+share a Docker network with each other, so `traefik.enable=true` labels
+— which is how percolator's nextcloud/paperless/homeassistant get routed
+— would silently do nothing here even if added. Every one of mochaPot's
+nine routed apps got a hand-written `http.routers` + `http.services`
+pair in `dynamic.yml.template` instead, backend URL
+`http://${MOCHAPOT_LAN_IP}:<published-port>` (not a container name — no
+shared network to reach one by).
+
+Routed: vikunja (3456), n8n (5678), freshrss (8090), mealie (9925),
+actualbudget (5006), stirlingpdf (8080), roundcube (8091), immich (2283),
+musicassistant (8095, `network_mode: host` — same as percolator's home
+assistant pattern, LAN-IP URL not container name). NOT routed: jellyfin
+(moved to roastery 2026-09-05, reachable directly by LAN IP there).
+
+Authelia's ForwardAuth middleware is defined in `dynamic.yml.template`
+(same direct-hop-to-sieve address as percolator's identical copy) but
+deliberately not attached to any router — same open, undecided call as
+percolator's three apps, not extended to a blanket policy just because
+there are more apps this time.
+
+Also added: `mochaPot/generate-secrets.sh` gained a `traefik/secrets.env.local`
+block prompting for `CF_DNS_API_TOKEN` (same reusable token as every
+other node, if it already has Zone:DNS:Edit scope); `sieve/local.env.example`
+gained `MOCHAPOT_LAN_IP`; `sieve/README.md`'s split-horizon DNS section
+and `mochaPot/README.md`'s traefik section both rewritten to match.
+
+### Still open
+
+- Not yet confirmed against a real browser hit — whether all nine
+  hostnames actually load with valid padlocks is the next real test, not
+  assumed from the config being written correctly.
+- Authelia gating per mochaPot app — real decision, not made here.
+- `/srv/data/traefik/letsencrypt` — instructed as an explicit `mkdir`
+  step in the README, but not tested whether Traefik's own root-default
+  behavior would have handled a Docker-auto-created version fine anyway
+  (unlike Vikunja/n8n's fixed-non-root-UID crash loop from earlier
+  tonight).

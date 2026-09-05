@@ -1,32 +1,47 @@
 services:
   traefik:
+    # v3.7.12, same pinned version as every other node's Traefik.
     image: traefik:v3.7.12
     container_name: traefik
-    command:
-      - "--providers.file.directory=/etc/traefik/dynamic"
-      - "--providers.file.watch=true"
-      - "--entrypoints.web.address=:80"
-      - "--api.dashboard=false"
-      # No providers.docker here, deliberately -- unlike percolator,
-      # mochaPot's apps don't share a Docker network with each other (no
-      # postgres/valkey binding them together the way percolator's data
-      # layer does), and most already publish their own host port. Routes
-      # to each app via the file provider + localhost:<published-port>
-      # instead of Docker service discovery -- simpler given the actual
-      # topology here, not a downgrade from percolator's approach, a
-      # different one that fits this node's actual app shape.
+    # Switched 2026-09-06 from the original inline `command:` block
+    # (plain HTTP, port 80 only) to a static traefik.yml -- real HTTPS
+    # via Cloudflare DNS-01, same fix percolator's Traefik needed before
+    # its own first real bring-up: Authelia hard-requires an https/wss
+    # target URL before it'll issue a session cookie for ForwardAuth, no
+    # config flag to relax it. Not wired to Authelia here yet (see
+    # dynamic.yml.template's own comment), but doing this now avoids
+    # rediscovering the same wall percolator hit if that's ever turned
+    # on later, and gives every app a real padlock either way.
+    #
+    # STILL no providers.docker, deliberately, same reasoning as the
+    # original file: mochaPot's apps don't share a Docker network with
+    # each other, and most already publish their own host port. Routes
+    # to each app via the file provider + ${MOCHAPOT_LAN_IP}:<port>
+    # instead of Docker service discovery -- see dynamic.yml.template.
+    environment:
+      CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN}
     ports:
       - "80:80"
+      - "443:443"
     volumes:
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
       - ./config/dynamic.yml:/etc/traefik/dynamic/dynamic.yml:ro
+      - /srv/data/traefik/letsencrypt:/letsencrypt
     restart: unless-stopped
-    # Deliberately last, per initiation.txt Section 18.6 ("Own Traefik
-    # instance -- last, once the apps above are healthy") -- not brought
-    # up as part of this build pass. Bring up every other mochaPot app
-    # first, confirm each is healthy on its own published port, THEN this
-    # one, THEN write config/dynamic.yml's actual routers pointing at
-    # each app's localhost:<port> plus the same sieve-Authelia ForwardAuth
-    # middleware percolator's traefik/ uses (see that file for the exact
-    # pattern) -- not written yet, deliberately, since nothing here should
-    # be routed through it until the direct-port version is confirmed
-    # working first.
+    # Brought up 2026-09-06, per initiation.txt Section 18.6 ("Own
+    # Traefik instance -- last, once the apps above are healthy") --
+    # every other mochaPot app (except jellyfin, moved to roastery) was
+    # confirmed up first. Two more steps still required before any
+    # hostname actually resolves/works, neither automatic:
+    #  1. pihole-dns-bootstrap.sh on sieve needs mochaPot's hostnames
+    #     added to HOST_TARGETS (done alongside this file, same day) --
+    #     without it, this is the exact DNS_PROBE_FINISHED_NXDOMAIN
+    #     detour percolator hit 2026-09-05, for the same reason: DNS-01
+    #     proves zone control to Let's Encrypt, it does not create an
+    #     actual resolvable record anywhere.
+    #  2. `sudo mkdir -p /srv/data/traefik/letsencrypt` on mochaPot before
+    #     first `up -d` -- Docker would otherwise auto-create it as
+    #     root:root, which is fine here (Traefik itself runs as root by
+    #     default, unlike Vikunja/n8n's fixed-non-root images caught
+    #     earlier tonight) but worth doing explicitly rather than relying
+    #     on that default.

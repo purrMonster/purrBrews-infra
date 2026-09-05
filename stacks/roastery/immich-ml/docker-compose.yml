@@ -1,0 +1,74 @@
+services:
+  immich-machine-learning:
+    # -cuda variant for NVIDIA GPU acceleration -- confirmed 2026-09-05
+    # against docs.immich.app/features/ml-hardware-acceleration/. Compute
+    # capability requirement (>=5.2) and driver/CUDA requirement
+    # (driver >=545, CUDA >=12.3) both comfortably met by roastery's RTX
+    # 3080 per initiation.txt -- verify the actual installed driver
+    # version on roastery itself before first bring-up (`nvidia-smi`),
+    # don't just trust the hardware spec.
+    #
+    # Same image family/tag scheme as mochaPot's immich-server
+    # (ghcr.io/immich-app/immich-server:v3.0.2) -- pin this to the exact
+    # same v3.0.2 release, not `:release-cuda`, so server and ML worker
+    # versions never drift apart. NOT independently confirmed to exist as
+    # an exact tag against the real container registry (see this file's
+    # own Known-gaps entry in README.md) -- if the pull fails, check
+    # github.com/immich-app/immich/pkgs/container/immich-machine-learning
+    # for the closest real tag before assuming something else is wrong.
+    image: ghcr.io/immich-app/immich-machine-learning:v3.0.2-cuda
+    container_name: immich_machine_learning
+    environment:
+      TZ: ${TZ}
+    volumes:
+      # Model cache -- relative bind mount into this app's own directory,
+      # not a Docker-managed named volume. No $DATA_DIR-style convention
+      # exists for roastery (every other node's is Section 19.4's
+      # $DATA_DIR/<appname> bind-mount pattern on Linux fleet nodes;
+      # roastery is the first-ever app built on a Windows/WSL2 host, and
+      # a relative path is simplest here rather than inventing a new
+      # global convention for one app). Revisit if a second roastery app
+      # also needs a persistent bind mount and a real pattern emerges.
+      - ./model-cache:/cache
+    ports:
+      # Bound to the tailnet address specifically, NOT 0.0.0.0 --
+      # deliberate, not an oversight. Immich's own docs state this
+      # container "has no security measures whatsoever" (no auth, no API
+      # key) -- binding to ${ROASTERY_TAILNET_IP} means it's reachable
+      # only from other Headscale tailnet members (mochaPot's
+      # immich-server), never from roastery's LAN interface or the
+      # internet. This also means docker compose will refuse to start
+      # this service if ROASTERY_TAILNET_IP isn't a real address already
+      # assigned to an interface on roastery -- i.e. Headscale enrollment
+      # has to happen BEFORE this will come up at all, which is the
+      # correct order anyway. See README.md's "Enroll roastery in
+      # Headscale" section.
+      - "${ROASTERY_TAILNET_IP}:3003:3003"
+    # GPU reservation -- standard Compose syntax (docs.docker.com/compose/
+    # gpu-support/), confirmed 2026-09-05 to work under plain `docker
+    # compose up` (not just Swarm). No GPU toggle exists in Docker
+    # Desktop's settings (corrected 2026-09-05 -- this comment originally
+    # claimed one did; checked docs.docker.com/desktop/features/gpu/
+    # after the user looked and found nothing). It's automatic once: WSL2
+    # backend is enabled, a current NVIDIA driver supporting WSL2 GPU
+    # Paravirtualization is installed on Windows itself, and WSL2's
+    # kernel is up to date (`wsl --update`). See README.md's "Bringing
+    # immich-ml up" section for the actual verification command -- none
+    # of this is something this file can configure.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    # Known gap, not resolved here (2026-09-05): job concurrency. Immich's
+    # own docs don't expose a compose-level/env-var concurrency knob for
+    # the ML worker (confirmed via search) -- it's configured from
+    # immich-server's Admin UI (Administration -> Settings -> Machine
+    # Learning Settings -> Job Settings) instead, once immich-server can
+    # actually reach this container. initiation.txt's Risk R10 calls for
+    # "capped job concurrency" so gaming performance isn't affected --
+    # set that in the Admin UI after first bring-up, it can't be
+    # pre-configured in this file.

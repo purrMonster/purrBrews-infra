@@ -127,13 +127,22 @@ log "komodo-periphery/secrets.env.local"
 prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
   "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
 
-# jellyfin/, musicassistant/, freshrss/, mealie/, actualbudget/,
-# stirlingpdf/ have no secrets.env.local of their own -- no auth config
-# exists at the compose level, first-run wizards/UI-set passwords instead
-# (confirmed per-app 2026-09-03). immich/'s own db credentials are
-# generated above now, colocated on this node as of 2026-09-05. mochaPot's
-# own traefik/ has none either, deliberately deferred -- see its own
-# docker-compose.yml comment.
+log "traefik/secrets.env.local"
+# Added 2026-09-06 -- real HTTPS via Cloudflare DNS-01, same pattern and
+# same required scope (Zone:DNS:Edit on ${DOMAIN}'s zone) as every other
+# node's Traefik/Caddy instance (sieve, silo, cellar, percolator). Safe
+# to reuse the exact same real token value across all of them if it
+# already has that scope -- Cloudflare tokens aren't tied to one server,
+# only to a zone and a permission set.
+prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
+  "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
+
+# jellyfin/ moved to roastery 2026-09-05, no secrets.env.local here.
+# musicassistant/, freshrss/, mealie/, actualbudget/, stirlingpdf/ have no
+# secrets.env.local of their own -- no auth config exists at the compose
+# level, first-run wizards/UI-set passwords instead (confirmed per-app
+# 2026-09-03). immich/'s own db credentials are generated above now,
+# colocated on this node as of 2026-09-05.
 # --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true

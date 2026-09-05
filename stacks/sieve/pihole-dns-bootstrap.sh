@@ -75,6 +75,8 @@ set +a
 : "${CELLAR_LAN_IP:?CELLAR_LAN_IP not set in .env.local — fill it in first, see README.md}"
 # Added 2026-09-05, alongside percolator's own Traefik-fronted apps below.
 : "${PERCOLATOR_LAN_IP:?PERCOLATOR_LAN_IP not set in .env.local — fill it in first, see README.md}"
+# Added 2026-09-06, alongside mochaPot's own Traefik-fronted apps below.
+: "${MOCHAPOT_LAN_IP:?MOCHAPOT_LAN_IP not set in .env.local — fill it in first, see README.md}"
 
 log()  { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -129,6 +131,23 @@ HOST_TARGETS=(
   "nextcloud:PERCOLATOR_LAN_IP"
   "paperless:PERCOLATOR_LAN_IP"
   "homeassistant:PERCOLATOR_LAN_IP"
+  # mochaPot's Traefik-fronted apps, added 2026-09-06 -- see
+  # stacks/mochaPot/README.md's traefik section. Added BEFORE bringing
+  # mochaPot's Traefik up this time, not after -- percolator's
+  # DNS_PROBE_FINISHED_NXDOMAIN detour on 2026-09-05 was exactly this
+  # step done out of order, and the lesson was to add these before
+  # testing in a browser, not after hitting the same error again.
+  # jellyfin deliberately excluded -- moved to roastery 2026-09-05, LAN-
+  # reachable there directly, not routed through any Traefik.
+  "vikunja:MOCHAPOT_LAN_IP"
+  "n8n:MOCHAPOT_LAN_IP"
+  "freshrss:MOCHAPOT_LAN_IP"
+  "mealie:MOCHAPOT_LAN_IP"
+  "actualbudget:MOCHAPOT_LAN_IP"
+  "stirlingpdf:MOCHAPOT_LAN_IP"
+  "roundcube:MOCHAPOT_LAN_IP"
+  "immich:MOCHAPOT_LAN_IP"
+  "musicassistant:MOCHAPOT_LAN_IP"
 )
 
 log "Reading current misc.dnsmasq_lines from the running pihole container"

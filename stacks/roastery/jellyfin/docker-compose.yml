@@ -1,0 +1,71 @@
+services:
+  jellyfin:
+    # Moved here from mochaPot 2026-09-05 -- see initiation.txt's
+    # 2026-09-05 correction note (Section 0.3) and the runbook's same-day
+    # entry for the full reasoning. Short version: mochaPot's plan relied
+    # on 7th-gen Intel Quick Sync passthrough, and the user's own earlier
+    # real-world experience with that exact transcode path (on
+    # percolator, same chip generation) was that it struggled decoding
+    # video. roastery's RTX 3080 -- with GPU passthrough already
+    # confirmed working via immich-ml the same day -- is a materially
+    # stronger transcode engine (NVENC/NVDEC) than any Quick Sync iGPU in
+    # this fleet.
+    #
+    # Same image, version, and confirmed-current tag as mochaPot's
+    # original file (jellyfin/jellyfin:10.11.11, confirmed 2026-09-03 per
+    # GitHub releases -- not the 12.0-rc7 pre-release "next-gen" tag).
+    image: jellyfin/jellyfin:10.11.11
+    container_name: jellyfin
+    environment:
+      TZ: ${TZ}
+      # Belt-and-suspenders alongside the deploy.resources.reservations
+      # block below -- some NVIDIA-in-Docker setups only pick up the
+      # right driver capabilities via this env var, others only via the
+      # compose `capabilities:` list. Set both since immich-ml's own
+      # working setup (built earlier the same day) only used the compose
+      # list and this is a genuinely different container image/use case
+      # (NVENC/NVDEC video codec support, not just general CUDA compute).
+      NVIDIA_DRIVER_CAPABILITIES: all
+    ports:
+      - "8096:8096"
+      - "7359:7359/udp"
+    volumes:
+      # Relative bind mounts into this app's own directory -- same
+      # pattern as immich-ml/model-cache, for the same reason (no
+      # $DATA_DIR-style convention exists for roastery yet, this being
+      # only the second app built here).
+      - ./config:/config
+      # Transcode scratch space -- local NVMe/SSD, not a network share;
+      # mochaPot's original file's own comment confirmed this matters for
+      # latency, still true here.
+      - ./cache:/cache
+      # Real media library -- see local.env.example's own comment on
+      # ROASTERY_MEDIA_PATH for how to set this and the NFS-migration
+      # note.
+      - ${ROASTERY_MEDIA_PATH}:/media
+    # GPU reservation -- same compose-native syntax proven working for
+    # immich-ml earlier the same day (no runtime: nvidia line needed, no
+    # separate NVIDIA Container Toolkit install -- Docker Desktop's own
+    # WSL2 GPU-PV handles it). Capabilities list is wider than
+    # immich-ml's (which only needed [gpu] for CUDA compute) --
+    # NVENC/NVDEC hardware video encode/decode specifically needs the
+    # "video" capability too. NOT yet confirmed against a real bring-up
+    # (see README.md's Known gaps) -- if Jellyfin's dashboard doesn't
+    # show NVENC as an available hardware acceleration option after
+    # first start, this capabilities list is the first thing to revisit.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video, compute, utility]
+    restart: unless-stopped
+    # No default credentials -- first-run setup wizard, same as
+    # mochaPot's original file confirmed via Jellyfin's own docs.
+    #
+    # LAN-reachable by design, unlike immich-ml's tailnet-only binding --
+    # see local.env.example's note on why: Jellyfin has real
+    # authentication, immich-ml has none. Still never port-forwarded past
+    # the router (initiation.txt Risk R9's actual concern is internet
+    # exposure, not LAN reachability).

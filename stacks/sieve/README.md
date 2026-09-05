@@ -391,7 +391,11 @@ Traefik-fronted apps (komodo, scrutiny, netalertx, homepage, speedtest)
 resolve to `SILO_LAN_IP`; cellar's Vaultwarden (vault) resolves to
 `CELLAR_LAN_IP`; percolator's three Traefik-fronted apps (nextcloud,
 paperless, homeassistant, added 2026-09-05) resolve to
-`PERCOLATOR_LAN_IP` — each pointing at *that* node's own LAN IP, not
+`PERCOLATOR_LAN_IP`; mochaPot's nine Traefik-fronted apps (vikunja, n8n,
+freshrss, mealie, actualbudget, stirlingpdf, roundcube, immich,
+musicassistant, added 2026-09-06 — jellyfin deliberately excluded, it
+moved to roastery and is reached directly by LAN IP) resolve to
+`MOCHAPOT_LAN_IP` — each pointing at *that* node's own LAN IP, not
 sieve's, per the hybrid split-horizon architecture (see the initiation
 doc, Section 0.3 / WBS 18.2). Added 2026-09-04, once silo's Docker-NAT-
 bypasses-ufw fix and cellar's Caddy/HTTPS requirement each made a real

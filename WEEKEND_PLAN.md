@@ -59,39 +59,101 @@ every compose file here is written and YAML-validated only. Do
 `./setup-secrets.sh` first if you haven't (fills `MOCHAPOT_LAN_IP`,
 `MOCHAPOT_RENDER_GID`, `SILO_LAN_IP`, `DOMAIN` into `.env.local`).
 
-- [ ] `komodo-periphery` — bring up first, same now-confirmed mechanism as
+- [x] `komodo-periphery` — **up 2026-09-05.** bring up first, same now-confirmed mechanism as
       cellar/percolator/sieve (`core.pub` copied from silo). Quick, low-risk,
       and gets mochaPot showing up in Komodo's UI immediately.
-- [ ] `immich` — first-ever bring-up of yesterday's restructured file
+- [x] `immich` — **up 2026-09-05** (server; ML worker connection to roastery still to verify — see §2b). first-ever bring-up of yesterday's restructured file
       (its own colocated `postgres-immich` + dedicated `valkey`, no more
       cross-host percolator dependency). Watch `depends_on:
       condition: service_healthy` actually gate startup correctly.
       `IMMICH_MACHINE_LEARNING_URL` still points at a roastery ML worker
       that doesn't exist — expected, ML features (face/object search) stay
       off until that's built separately; not a blocker.
-- [ ] `jellyfin`, `musicassistant` — bring up together, both use mDNS/host
-      networking patterns already researched.
-- [ ] `vikunja`, `freshrss`, `mealie`, `actualbudget`, `stirlingpdf` — no
+- [ ] ~~`jellyfin`, `musicassistant` — bring up together~~ — **Jellyfin
+      moved to roastery 2026-09-05** (Quick Sync struggled decoding video
+      in an earlier real deployment; roastery's RTX 3080 is a materially
+      stronger transcode path, and its GPU passthrough is already
+      confirmed working). See §2b below. `musicassistant` still belongs
+      here, on its own: `sudo ./compose.sh musicassistant up -d`. **Up 2026-09-05.**
+- [x] `vikunja`, `freshrss`, `mealie`, `actualbudget`, `stirlingpdf` — **all up 2026-09-05.** Still owed: actually change Mealie's and Stirling PDF's default logins, not just "checked" them. no
       known interdependencies, any order. Check each one's DEFAULT LOGIN
       STATE as the first step before anything else, same standing
       discipline established on silo (some of these may ship an open
       setup wizard or a documented default account — Mealie specifically
       is noted to have one).
-- [ ] `n8n` — needs `N8N_ENCRYPTION_KEY` from `generate-secrets.sh`,
+- [x] `n8n` — **up 2026-09-05.** needs `N8N_ENCRYPTION_KEY` from `generate-secrets.sh`,
       confirm it generated correctly and persists across a container
       restart (a changed key invalidates existing workflows/credentials).
-- [ ] `roundcube` — needs real external SMTP values
+- [x] `roundcube` — **up 2026-09-05.** needs real external SMTP values
       (`ROUNDCUBE_SMTP_HOST` etc., prompted by `generate-secrets.sh`, not
       generatable) — have your actual mail provider's settings ready.
-- [ ] `traefik` — deliberately last, once every app above is confirmed
-      healthy. Same DNS-01 + Pi-hole two-step as percolator: bring
-      Traefik up, add `traefik.enable=true` labels to each app **and**
-      add the corresponding entries to `pihole-dns-bootstrap.sh`'s
-      `HOST_TARGETS` (pointing at `MOCHAPOT_LAN_IP`) *before* testing in
-      a browser — today's whole DNS_PROBE_FINISHED_NXDOMAIN detour on
-      percolator was exactly this step done out of order.
+- [x] `traefik` — **up 2026-09-06.** No `traefik.enable=true` labels
+      here (mochaPot has no `providers.docker` — routing is hand-written
+      `http.routers`/`http.services` pairs in `dynamic.yml.template`
+      instead). `pihole-dns-bootstrap.sh`'s `HOST_TARGETS` got mochaPot's
+      nine hostnames added on sieve *before* this bring-up this time, not
+      after — learned that lesson from percolator's
+      DNS_PROBE_FINISHED_NXDOMAIN detour. Still to confirm: every
+      hostname actually loads with a valid padlock in a real browser.
 - [ ] Decide Authelia gating per mochaPot app, same open call as
       percolator's three.
+
+## 2b. roastery — Immich ML worker (added 2026-09-05)
+
+Not part of the original weekend scope, but built today alongside
+mochaPot since it's a hard dependency for Immich's face-recognition/smart-
+search features. First-ever app on roastery — see
+`stacks/roastery/README.md` for the full walkthrough; this is a summary
+checklist.
+
+- [ ] On sieve: generate a headscale pre-auth key for `barista`
+      (`sudo docker exec headscale headscale preauthkeys create --user
+      barista --expiration 1h`).
+- [ ] On roastery, in WSL2: enroll with `tailscale up
+      --login-server=https://headscale.${DOMAIN} --authkey=<key>`, then
+      record `tailscale ip -4` as `ROASTERY_TAILNET_IP`.
+- [ ] `cd stacks/roastery && chmod +x *.sh && ./setup-secrets.sh` — fill
+      in `ROASTERY_TAILNET_IP` when prompted.
+- [ ] Verify GPU passthrough BEFORE first bring-up: `nvidia-smi` (driver
+      >=545), then `docker run --rm --gpus all
+      nvidia/cuda:12.3.1-base-ubuntu22.04 nvidia-smi` (should show the RTX
+      3080 from inside a container — if not, fix Docker Desktop's GPU
+      support first, don't bring up immich-ml against a silent CPU
+      fallback).
+- [ ] `./compose.sh immich-ml up -d`, confirm with `./compose.sh immich-ml
+      logs -f` and `curl http://<tailnet IP>:3003/ping`.
+- [ ] On mochaPot's Immich Admin UI (Administration → Settings → Machine
+      Learning Settings): confirm the ML worker URL, then set a job
+      concurrency cap (initiation.txt Risk R10 — not doable from a
+      compose file).
+- [ ] Also fill mochaPot's own `.env.local`'s `ROASTERY_TAILNET_IP` (added
+      2026-09-05 — was referenced in a comment there since 2026-09-03 but
+      never actually declared, now fixed).
+- [ ] Known unconfirmed: the `immich-machine-learning:v3.0.2-cuda` image
+      tag hasn't been checked against a real `docker pull` — if it 404s,
+      check github.com/immich-app/immich/pkgs/container/immich-machine-learning
+      for the closest real tag.
+
+### 2c. roastery — Jellyfin, moved from mochaPot (added 2026-09-05)
+
+Quick Sync struggled decoding video in an earlier real deployment on
+percolator — moving Jellyfin to roastery's RTX 3080 instead. See
+`stacks/roastery/README.md`'s Jellyfin section for the full walkthrough.
+
+- [ ] Fill in `ROASTERY_MEDIA_PATH` in roastery's `.env.local` (WSL2 path
+      to your media library, e.g. `/mnt/d/Media`).
+- [ ] `./compose.sh jellyfin up -d`, complete the first-run setup wizard
+      at `http://<roastery LAN IP>:8096`.
+- [ ] In Jellyfin's Admin Dashboard → Playback, set hardware acceleration
+      to NVENC and confirm codec options populate.
+- [ ] Play something that actually needs transcoding and watch
+      `nvidia-smi` on roastery during playback — confirm a process shows
+      up under the GPU, not a silent CPU fallback (the exact failure mode
+      percolator's Quick Sync had, just now on different hardware if it
+      recurs).
+- [ ] `git rm -r stacks/mochaPot/jellyfin` once you're confident roastery
+      is the version to keep — it's currently a non-functional stub, not
+      deleted (device-bridge tooling can't delete files).
 
 ## 3. Ristretto — deploy LAST, once the rest of the fleet has real
        endpoints worth monitoring (this is initiation.txt's own explicit

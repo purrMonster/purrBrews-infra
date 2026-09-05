@@ -64,9 +64,12 @@ values by hand before first bring-up:
 moved onto this node itself, see its own section below, so nothing here
 needs percolator's LAN IP anymore.)
 
-`ROASTERY_TAILNET_IP` (Immich's ML worker endpoint) is deliberately not in
-`local.env.example` yet — roastery's GPU-accelerated ML worker isn't built.
-Immich runs fine without it, it just skips ML inference until that exists.
+- `ROASTERY_TAILNET_IP` — roastery's GPU-accelerated ML worker now exists
+  (`stacks/roastery/immich-ml/`, built 2026-09-05) but needs Headscale
+  enrollment on roastery itself first — see that stack's own README for
+  the walkthrough — before this has a real value to fill in. Immich runs
+  fine without it, it just skips ML inference (face recognition, smart
+  search) until it's filled in.
 
 ## Bringing each app up
 
@@ -74,22 +77,21 @@ Bring every app up on its own published port first and confirm it's
 healthy before touching mochaPot's own Traefik — see that app's own note
 below for why.
 
-### Jellyfin (media server)
+### Jellyfin — moved to roastery (2026-09-05)
 
-```
-sudo ./compose.sh jellyfin up -d
-```
-
-UI: `http://<mochaPot LAN IP>:8096`. No default credentials — first-run
-setup wizard creates the admin account.
-
-Before first bring-up, confirm `MOCHAPOT_RENDER_GID` is filled in
-correctly (`getent group render | cut -d: -f3` on mochaPot) — device
-passthrough (`/dev/dri/renderD128`) alone silently falls back to software
-transcoding if the container's group membership doesn't also match; there
-is no error, just slower transcodes. `/media` is currently a local bind
-mount (`/srv/media`) as a stopgap — cellar's NFS export isn't set up yet
-(see stacks/cellar/README.md's smb/ section); swap this once that exists.
+**No longer built here.** Quick Sync transcoding struggled noticeably in
+an earlier real deployment on percolator's same-generation iGPU — the
+user's own report, and mochaPot's chip is the same 7th-gen family, so
+that experience was judged likely to carry over rather than being
+percolator-specific. Jellyfin now lives on roastery instead, using its
+RTX 3080 for NVENC/NVDEC — see `stacks/roastery/README.md`'s Jellyfin
+section and the runbook's 2026-09-05 entry for the full reasoning.
+`stacks/mochaPot/jellyfin/docker-compose.yml` is left as a non-functional
+stub (device-bridge tooling can't delete files) — run `git rm -r
+stacks/mochaPot/jellyfin` to actually remove it. `MOCHAPOT_RENDER_GID` in
+`local.env.example` is now unused by anything on this node; left in place
+rather than removed in case a future mochaPot app needs Quick Sync for
+something else.
 
 ### Music Assistant (audio player orchestration)
 
@@ -126,15 +128,29 @@ grow this node's storage than to keep managing that exposure).
 `local.env.example` 2026-09-05.
 
 ML inference (`IMMICH_MACHINE_LEARNING_URL`) points at
-`${ROASTERY_TAILNET_IP}:3003`, which doesn't exist yet — Immich works
-without it, just without ML features (face recognition, smart search)
-until roastery's ML worker is actually built.
+`${ROASTERY_TAILNET_IP}:3003` — the worker itself now exists
+(`stacks/roastery/immich-ml/`, built 2026-09-05), but two things still
+have to happen before this actually connects: roastery needs to be
+enrolled in the fleet's Headscale tailnet (manual, on roastery itself —
+see its README), and this node's `.env.local` needs the real
+`ROASTERY_TAILNET_IP` value. Until then Immich works fine without ML
+features (face recognition, smart search); this isn't a broken fallback,
+inference is just unconfigured.
 
 ### Vikunja (tasks)
 
 ```
+sudo mkdir -p /srv/data/vikunja/db /srv/data/vikunja/files
+sudo chown -R 1000:0 /srv/data/vikunja/db /srv/data/vikunja/files
 sudo ./compose.sh vikunja up -d
 ```
+
+**The `mkdir`+`chown` steps are required, not optional** — caught
+2026-09-05 on a real bring-up: without them, Docker auto-creates the bind
+mount as `root:root`, but the Vikunja image runs as a fixed non-root user
+(`uid=1000, gid=0` — confirmed from the container's own error log), so it
+can't write its file-storage test file and crash-loops with `permission
+denied` forever. See the runbook's 2026-09-05 entry.
 
 UI: `http://<mochaPot LAN IP>:3456`. SQLite, not Postgres — a deliberate
 deviation from Vikunja's own reference compose, per initiation.txt Section
@@ -145,8 +161,17 @@ the first account through the UI.
 ### n8n (automation)
 
 ```
+sudo mkdir -p /srv/data/n8n
+sudo chown -R 1000:1000 /srv/data/n8n
 sudo ./compose.sh n8n up -d
 ```
+
+**The `mkdir`+`chown` steps are required, not optional** — same class of
+bug as Vikunja's above, caught the same day: the official n8n image runs
+as its `node` user, `uid/gid 1000:1000` (a well-documented n8n gotcha,
+confirmed against n8n-io/n8n#1240), and fails outright
+(`EACCES: permission denied, open '/home/node/.n8n/config'`) against a
+root-owned bind mount. See the runbook's 2026-09-05 entry.
 
 UI: `http://<mochaPot LAN IP>:5678`. No default credentials — first visit
 sets up an owner account. `N8N_ENCRYPTION_KEY` is pinned (not left to
@@ -220,20 +245,62 @@ re-run it once you have the real values, or edit
 `roundcube/secrets.env.local` directly. No admin account — login is
 per-user against whatever the configured IMAP server accepts.
 
-### Traefik — deliberately deferred
+### Traefik — real HTTPS, brought up 2026-09-06
 
-`traefik/docker-compose.yml` exists but is not part of this bring-up pass.
-Per initiation.txt Section 18.6, mochaPot's own Traefik comes up last,
-once every app above is confirmed healthy on its own published port.
-Unlike percolator's Traefik, this one has no `providers.docker` — mochaPot's
-apps don't share a Docker network with each other, so routing goes through
-the file provider straight to each app's `localhost:<published-port>`.
-`traefik/config/dynamic.yml.template` is currently a placeholder (exists
-only so the bind mount has a real file — Docker would otherwise create a
-directory at a missing bind-mount source). Write real `http.routers` /
-`http.middlewares` entries — same ForwardAuth-to-sieve's-Authelia pattern
-as `stacks/percolator/traefik/config/dynamic.yml.template` — once every
-app above is confirmed working directly, not before.
+Every app above (except jellyfin, moved to roastery 2026-09-05) was
+confirmed healthy on its own published port first, per initiation.txt
+Section 18.6's sequencing — this comes last.
+
+Real HTTPS via Cloudflare DNS-01, same as every other node's Traefik/
+Caddy instance — switched from the original plain-HTTP `command:` block
+before this was brought up for real, same reasoning percolator's Traefik
+needed: Authelia hard-requires an https/wss target before it'll issue a
+session cookie for ForwardAuth, no config flag to relax it. Not actually
+wired to Authelia yet here (see below), but doing this now avoids hitting
+that wall later if it ever is turned on.
+
+**Still no `providers.docker`** — mochaPot's apps don't share a Docker
+network with each other, so `traefik.enable=true` labels wouldn't do
+anything here even if added (there's no docker provider to read them).
+Routing is entirely file-provider-based: `traefik/config/dynamic.yml.template`
+has a hand-written `http.routers` + `http.services` pair for each app,
+pointing at `${MOCHAPOT_LAN_IP}:<published-port>` — not container names,
+since there's no shared network to reach them by name.
+
+```sh
+sudo mkdir -p /srv/data/traefik/letsencrypt
+./compose.sh traefik up -d
+```
+
+**Before testing any hostname in a browser**, add mochaPot's nine
+hostnames to sieve's `pihole-dns-bootstrap.sh` `HOST_TARGETS` (done
+alongside this build, 2026-09-06) and run it on sieve with
+`MOCHAPOT_LAN_IP` filled in:
+
+```sh
+# on sieve
+./pihole-dns-bootstrap.sh --dry-run   # preview
+./pihole-dns-bootstrap.sh             # apply
+```
+
+Skipping this is exactly the `DNS_PROBE_FINISHED_NXDOMAIN` detour
+percolator hit on 2026-09-05 — a successfully issued cert proves Let's
+Encrypt accepted DNS-01 zone-control proof, it does not create an actual
+resolvable DNS record anywhere; that's Pi-hole's job, done by this script,
+not by Traefik.
+
+Hostnames, all `${DOMAIN}`-suffixed: `vikunja`, `n8n`, `freshrss`,
+`mealie`, `actualbudget`, `stirlingpdf`, `roundcube`, `immich`,
+`musicassistant`. Jellyfin deliberately excluded — it's on roastery now,
+reachable directly by LAN IP, not routed through any Traefik.
+
+**Authelia ForwardAuth gating — left off deliberately, not an oversight**,
+same open call as percolator's three apps. The `authelia` middleware is
+already defined in `dynamic.yml.template` (same direct-hop-to-sieve
+pattern as percolator's copy) but not attached to any router yet. Most of
+these apps already have their own login (Vikunja, n8n, Mealie, Stirling
+PDF, Immich); Actual Budget and Music Assistant may not — worth deciding
+per-app rather than blanket-applying ForwardAuth to all nine.
 
 ### komodo-periphery
 
@@ -292,8 +359,11 @@ republished on silo's `scrutiny` service (done 2026-09-05).
   cross-checked against a live `ss -tlnp` on real mochaPot hardware — the
   FreshRSS/Music-Assistant collision was caught by inspection, but nothing
   guarantees there isn't another one.
-- `ROASTERY_TAILNET_IP` isn't wired into `local.env.example` yet — add it
-  once roastery's Immich ML worker actually exists.
+- `ROASTERY_TAILNET_IP` is now a real key in `local.env.example`
+  (2026-09-05 — previously only referenced in a comment, never actually
+  declared, caught while building roastery's ML worker for real) but
+  still needs a real value: enroll roastery in Headscale first (see
+  `stacks/roastery/README.md`), then fill this in.
 - Immich's database layer (its own colocated Postgres+Valkey, see its
   section above) is new as of 2026-09-05 and hasn't been run against real
   hardware in this shape yet — first real test is whatever bring-up
@@ -307,3 +377,20 @@ republished on silo's `scrutiny` service (done 2026-09-05).
   manage it), see `stacks/_templates/komodo-periphery/docker-compose.yml`
   — copy it into an app subdirectory here and fill in its `REPLACE_ME`
   values. Not done as part of this build pass.
+- Jellyfin moved off this node entirely (2026-09-05, see its own section
+  above) — `stacks/mochaPot/jellyfin/` is a stub, not a working app.
+  `initiation.txt`'s original Section 17 table and the `jellyfin`
+  reference in `stacks/roastery/README.md`'s "What's here" are the two
+  places that reflect this; nowhere else in this repo should still list
+  Jellyfin as a mochaPot app going forward.
+- Root-owned bind-mount crash loop (2026-09-05): Vikunja and n8n both hit
+  this on first real bring-up (see their own sections above and the
+  runbook's 2026-09-05 entry) — a fixed non-root-UID image against a
+  Docker-auto-created `root:root` bind mount. Both are fixed now with an
+  explicit `mkdir`+`chown` step. Mealie, FreshRSS, Actual Budget, Stirling
+  PDF, and Roundcube were brought up the same session but NOT
+  individually re-checked for the same failure mode — `sudo docker ps`
+  showing them healthy (not restarting) is the quick check; their
+  `docker-compose.yml` files don't yet have a preemptive `chown` step
+  added, so if any of them also run as a fixed non-root user without a
+  self-fixing entrypoint, they'd hit this too.
