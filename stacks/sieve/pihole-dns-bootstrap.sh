@@ -73,6 +73,8 @@ set +a
 # other place this fleet passes a LAN IP between nodes' .env.local files.
 : "${SILO_LAN_IP:?SILO_LAN_IP not set in .env.local — fill it in first, see README.md}"
 : "${CELLAR_LAN_IP:?CELLAR_LAN_IP not set in .env.local — fill it in first, see README.md}"
+# Added 2026-09-05, alongside percolator's own Traefik-fronted apps below.
+: "${PERCOLATOR_LAN_IP:?PERCOLATOR_LAN_IP not set in .env.local — fill it in first, see README.md}"
 
 log()  { printf '\n\033[1;36m==>\033[0m %s\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -113,6 +115,20 @@ HOST_TARGETS=(
   # Cloudflare DNS-01 is not optional here (Bitwarden clients refuse
   # plain HTTP), and this hostname is the only way to reach it at all.
   "vault:CELLAR_LAN_IP"
+  # percolator's Traefik-fronted apps, added 2026-09-05 -- see
+  # stacks/percolator/README.md's traefik section. None of these three
+  # publish a direct host port anymore (nextcloud/paperless never did;
+  # homeassistant's 8123 still technically works by raw IP, but this
+  # hostname is the real intended path, same as everything else in this
+  # list) -- this DNS entry is what actually makes them reachable by the
+  # names their own TLS certs were issued for. Caught missing 2026-09-05
+  # when a real browser hit on nextcloud.${DOMAIN} came back
+  # DNS_PROBE_FINISHED_NXDOMAIN despite the cert issuing fine -- DNS-01
+  # proves zone control to Let's Encrypt, it doesn't create an actual
+  # resolvable record anywhere, that's this script's job.
+  "nextcloud:PERCOLATOR_LAN_IP"
+  "paperless:PERCOLATOR_LAN_IP"
+  "homeassistant:PERCOLATOR_LAN_IP"
 )
 
 log "Reading current misc.dnsmasq_lines from the running pihole container"

@@ -2061,3 +2061,43 @@ come through Traefik.
 - If it works for one, it should work for all three (same cert resolver,
   same zone) -- but confirm at least the first one actually completes
   before assuming the rest will too.
+
+## 2026-09-05 — nextcloud.${DOMAIN} cert issued, but DNS_PROBE_FINISHED_NXDOMAIN in browser
+
+Traefik on percolator successfully obtained a real cert for
+`nextcloud.whiskertreat.fyi` (confirmed in its own logs: `Server responded
+with a certificate`). A real browser hit on that same hostname still
+failed outright with `DNS_PROBE_FINISHED_NXDOMAIN` -- not a TLS/cert
+problem, DNS resolution itself never found the name at all.
+
+Root cause: obvious in hindsight, easy to miss in the moment -- DNS-01
+proves zone control to Let's Encrypt via a TXT record, it does NOT create
+any actual A record anywhere. Nothing about a successful DNS-01 challenge
+makes a hostname resolve for a real client. This fleet's actual name
+resolution for LAN-only `*.${DOMAIN}` hostnames is sieve's Pi-hole, driven
+by `stacks/sieve/pihole-dns-bootstrap.sh`'s `HOST_TARGETS` array -- and
+that array had sieve's own four subdomains, silo's five, and cellar's
+`vault`, but NOTHING for percolator. Every one of today's three new
+hostnames (`nextcloud`/`paperless`/`homeassistant`.${DOMAIN}) was always
+going to fail with NXDOMAIN in a browser regardless of how correctly
+Traefik/TLS was configured, until this got fixed.
+
+Fixed: added `nextcloud`/`paperless`/`homeassistant` to
+`HOST_TARGETS`, all resolving to a new `PERCOLATOR_LAN_IP` variable
+(added to `stacks/sieve/local.env.example` and the bootstrap script's
+required-var checks, same pattern as `SILO_LAN_IP`/`CELLAR_LAN_IP`).
+
+### To apply, on sieve
+
+```sh
+cd /opt/purrbrews/stacks/sieve
+# confirm PERCOLATOR_LAN_IP is filled in with a real value, not REPLACE_ME:
+grep PERCOLATOR_LAN_IP .env.local || echo 'PERCOLATOR_LAN_IP=<percolator LAN IP here>' | sudo tee -a .env.local
+git pull
+./pihole-dns-bootstrap.sh --dry-run   # confirm it shows exactly 6 missing entries (3 hostnames x A+AAAA-block)
+./pihole-dns-bootstrap.sh             # actually apply, restarts pihole
+nslookup nextcloud.${DOMAIN}          # from sieve itself, or any LAN client -- should resolve to percolator's IP now
+```
+
+Not yet applied as of this entry. Once it is, all three hostnames from
+today's Traefik work should actually be reachable by name.

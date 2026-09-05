@@ -389,14 +389,22 @@ out to be inert under Pi-hole v6): sieve's own four subdomains (pihole,
 authelia, traefik, headscale) resolve to `SIEVE_LAN_IP`; silo's five
 Traefik-fronted apps (komodo, scrutiny, netalertx, homepage, speedtest)
 resolve to `SILO_LAN_IP`; cellar's Vaultwarden (vault) resolves to
-`CELLAR_LAN_IP` — each pointing at *that* node's own LAN IP, not sieve's,
-per the hybrid split-horizon architecture (see the initiation doc,
-Section 0.3 / WBS 18.2). Added 2026-09-04, once silo's Docker-NAT-
+`CELLAR_LAN_IP`; percolator's three Traefik-fronted apps (nextcloud,
+paperless, homeassistant, added 2026-09-05) resolve to
+`PERCOLATOR_LAN_IP` — each pointing at *that* node's own LAN IP, not
+sieve's, per the hybrid split-horizon architecture (see the initiation
+doc, Section 0.3 / WBS 18.2). Added 2026-09-04, once silo's Docker-NAT-
 bypasses-ufw fix and cellar's Caddy/HTTPS requirement each made a real
 hostname the *only* remaining way to reach several apps — this isn't
 optional cosmetic DNS, komodo.${DOMAIN} etc. and vault.${DOMAIN} won't
 resolve at all until this script has been run with `SILO_LAN_IP`/
-`CELLAR_LAN_IP` filled in on sieve's own `.env.local`.
+`CELLAR_LAN_IP`/`PERCOLATOR_LAN_IP` filled in on sieve's own `.env.local`.
+Caught the hard way 2026-09-05: percolator's Traefik issued a real,
+valid cert for `nextcloud.${DOMAIN}` — DNS-01 only proves zone control to
+Let's Encrypt, it creates no actual resolvable record anywhere — and a
+real browser hit still came back `DNS_PROBE_FINISHED_NXDOMAIN` because
+this script's `HOST_TARGETS` didn't have percolator's hostnames in it at
+all yet.
 
 ### komodo-periphery
 
