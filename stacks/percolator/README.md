@@ -204,6 +204,39 @@ sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp
 docker logs traefik --tail 30   # look for a successful cert issuance, not just a clean startup
 ```
 
+### komodo-periphery
+
+Added 2026-09-04, so silo's Komodo Core can see and manage percolator's
+containers too -- no Core/Mongo here, just the agent (see
+`komodo-periphery/docker-compose.yml`'s own header comment for the full
+architecture note, same pattern as cellar's/sieve's/mochaPot's own copies
+of this file). This is also the intended replacement for
+`./compose.sh`-driven bring-up per Section 19.2 (see this README's own
+header) -- once this is actually connected, prefer deploying percolator's
+apps through Komodo's UI/API instead of SSHing in directly, though
+nothing here stops you from still using `./compose.sh` if that's easier.
+
+```sh
+sudo mkdir -p /srv/data/komodo-periphery/keys
+./compose.sh komodo-periphery up -d
+```
+
+**Two things need to be true before `up -d` actually connects, neither
+automatic**:
+
+1. `komodo-periphery/secrets.env.local`'s `PERIPHERY_ONBOARDING_KEY` needs
+   a real value from silo's Komodo UI (Settings -> the onboarding/servers
+   section).
+2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto
+   percolator first -- **this mechanism is unverified**, see
+   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
+   `scp` command.
+
+Same outbound-only connection as every other node's Periphery
+(percolator -> silo on port 9120, no inbound rule needed on percolator)
+— and the same root-equivalent caveat: whoever controls Core on silo has
+root-equivalent access to percolator once this is connected.
+
 ## What's here now
 
 - `compose.sh` — wrapper so every app's docker-compose.yml sees the shared
@@ -221,9 +254,10 @@ docker logs traefik --tail 30   # look for a successful cert issuance, not just 
   percolator originally had a two-half SOPS+age bridge here instead —
   `decrypt-secrets.sh` plus a roastery-side `generate-secrets.ps1` —
   dropped fleet-wide for this simpler local-only approach; see that day's
-  runbook entry.) Covers `traefik/secrets.env.local`'s `CF_DNS_API_TOKEN`
-  as of 2026-09-04 (see traefik's own section above) — no other app has
-  built-out secrets yet.
+  runbook entry.) Covers `traefik/secrets.env.local`'s `CF_DNS_API_TOKEN` and
+  `komodo-periphery/secrets.env.local`'s `PERIPHERY_ONBOARDING_KEY` as of
+  2026-09-04 (see each app's own section above) — postgres/nextcloud/
+  paperless's secrets are generated, not prompted.
 - `local.env.example` — copy to `.env.local` and fill in. Minimal for now
   (`PERCOLATOR_LAN_IP`, `TZ`, `DOMAIN`) — grows as apps are added, same
   as silo's did.

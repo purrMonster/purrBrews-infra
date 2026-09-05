@@ -132,6 +132,15 @@ log "traefik/secrets.env.local"
 prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
   "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
 
+log "komodo-periphery/secrets.env.local"
+# Added 2026-09-04, alongside pre-emptively building percolator's Komodo
+# Periphery agent (before it was ever brought up for the first time --
+# see komodo-periphery/docker-compose.yml's own comment). Real external
+# value from silo's Komodo UI, not generatable here -- same category as
+# traefik's CF_DNS_API_TOKEN just above.
+prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
+  "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
+
 # homeassistant/ has no secrets.env.local -- no compose-level DB config
 # exists for HA (see homeassistant/docker-compose.yml's own comment: the
 # recorder DB is configuration.yaml-only, provisioned manually after first

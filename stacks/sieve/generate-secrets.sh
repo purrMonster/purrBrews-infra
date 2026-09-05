@@ -129,6 +129,15 @@ prompt_if_placeholder "${DIR}/cloudflared/secrets.env.local" "TUNNEL_TOKEN" \
   "Cloudflare Tunnel token (cloudflared tunnel token sieve)" \
   "REPLACE_ME_cloudflared_tunnel_token" --secret
 
+log "komodo-periphery/secrets.env.local"
+# Added 2026-09-04 -- yes, sieve too: silo's Komodo Core can manage
+# sieve's own containers the same way it will percolator/cellar/
+# mochaPot's, once this connects. Real external value from silo's Komodo
+# UI, not generatable here -- same category as traefik's/cloudflared's
+# own tokens just above.
+prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
+  "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
+
 chmod 600 "${DIR}/.env.local" "${DIR}"/*/secrets.env.local 2>/dev/null || true
 
 log "Summary"

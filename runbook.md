@@ -1601,3 +1601,177 @@ percolator (percolator not physically buildable yet regardless).
   header.
 - Percolator's version of all of this is completely untested -- confirm
   on its first real bring-up, whenever that happens.
+
+## 2026-09-04 (cont.) — silo's Traefik/Authelia gate confirmed working end to end
+
+User Penguin confirmed the fix worked. Closes out the full incident
+chain from earlier tonight: stale post-prune containers -> Authelia's
+port never published to sieve's own host -> the wrong first fix (routing
+ForwardAuth through sieve's public Traefik, broke `X-Forwarded-Method`)
+-> the real fix (direct hop + published port) -> the TLS gap (Authelia
+refusing plain-HTTP targets) -> real certs via Cloudflare DNS-01. Four
+distinct real bugs found and fixed in one session, each confirmed against
+actual logs/output rather than assumed, per this project's own
+discipline.
+
+### Still open, not part of this chain
+
+- **Scrutiny** on silo -- diagnosed earlier tonight (`SCRUTINY_DISK_DEVICE`
+  never added to silo's live `.env.local`), fix given, not yet confirmed
+  applied or re-tested.
+- **Pi-hole Local DNS Records** -- `pihole-dns-bootstrap.sh` still hasn't
+  been run for real on sieve (needs `SILO_LAN_IP`/`CELLAR_LAN_IP` filled
+  into sieve's live `.env.local` first). Everything tonight has been
+  verified with `curl -k -H "Host: ..."` against a raw IP -- an actual
+  browser hitting `homepage.whiskertreat.fyi` etc. by name still won't
+  resolve until this runs.
+- **Percolator's identical TLS/Authelia setup is completely untested** --
+  built and validated locally tonight, but percolator doesn't exist as
+  hardware yet. Confirm on its first real bring-up.
+- **Cellar's Komodo Periphery agent** -- still blocked on a real
+  `PERIPHERY_ONBOARDING_KEY` from silo's Komodo UI (now actually
+  reachable to get that from) and the still-unverified `core.pub`
+  cross-host provisioning step.
+
+## 2026-09-04 (cont.) — Komodo Periphery agents added to percolator, sieve, mochaPot
+
+User Penguin asked to bring percolator up for real and add Komodo
+Periphery agents to percolator, sieve, and mochaPot (cellar already got
+one earlier tonight). Built all three from the same template cellar's
+copy came from, each with `PERIPHERY_CONNECT_AS` set to the real node
+name and no `networks:` block (none of these need to reach anything else
+locally, only silo, over the LAN). Same unresolved caveat carried into
+all three: `PERIPHERY_CORE_PUBLIC_KEYS`'s cross-host provisioning (the
+`scp core.pub` mechanism) is still unverified anywhere in this fleet —
+flagged consistently in every copy rather than asserted as confirmed.
+
+Wired `PERIPHERY_ONBOARDING_KEY` into each node's own `generate-
+secrets.sh` via `prompt_if_placeholder` — functionally tested in
+throwaway copies for all three, confirmed idempotent. Added
+`SILO_LAN_IP` to percolator's and mochaPot's `local.env.example` (sieve's
+already had it, added earlier tonight for `pihole-dns-bootstrap.sh`;
+cellar's too). Caught a real mistake before it shipped: percolator's
+compose file comment initially claimed percolator's `local.env.example`
+already had `SILO_LAN_IP` — it didn't, only sieve's and cellar's did.
+Fixed by actually adding it rather than leaving the comment's false
+claim standing.
+
+Added a `### komodo-periphery` section to all three READMEs (percolator's
+also notes this is the actual intended deploy path per initiation.txt
+Section 19.2 — `./compose.sh` was always meant as the interim/dev
+mechanism for cellar-onward, Komodo-driven deploys is the real target
+once this connects). Fixed two more stale lines caught along the way on
+percolator's README (`generate-secrets.sh`'s "no other app has built-out
+secrets yet" bullet, now covering two apps' worth of prompted secrets).
+
+Validated every new/touched file before handing off: all three
+`docker-compose.yml`s rendered via throwaway `envsubst` + PyYAML,
+confirming the right `PERIPHERY_CONNECT_AS` landed in each; all three
+`generate-secrets.sh` copies syntax-checked and functionally tested.
+
+### Pending, this entry
+
+- **Bring up percolator for the first time** — full sequence, nothing on
+  this node has ever been started:
+  ```sh
+  cd /opt/purrbrews/stacks/percolator
+  git pull
+  chmod +x *.sh
+  ./generate-secrets.sh        # fills in what it can; flags CF_DNS_API_TOKEN
+                                # and PERIPHERY_ONBOARDING_KEY as REPLACE_ME
+  # fill in .env.local: DOMAIN, SIEVE_LAN_IP, SILO_LAN_IP, PERCOLATOR_LAN_IP
+  # fill in traefik/secrets.env.local: CF_DNS_API_TOKEN
+  # fill in komodo-periphery/secrets.env.local: PERIPHERY_ONBOARDING_KEY
+  #   (from silo's Komodo UI, once silo's Komodo is confirmed reachable)
+  ./render-configs.sh
+
+  sudo mkdir -p /srv/data/postgres-immich /srv/data/postgres-homeassistant \
+    /srv/data/postgres-nextcloud /srv/data/postgres-paperless
+  sudo ufw allow from <mochaPot's LAN IP> to any port 5432 proto tcp
+  ./compose.sh postgres up -d
+
+  sudo ufw allow from <mochaPot's LAN IP> to any port 6379 proto tcp
+  ./compose.sh valkey up -d
+
+  sudo mkdir -p /srv/data/homeassistant
+  ./compose.sh homeassistant up -d
+
+  sudo mkdir -p /srv/data/nextcloud
+  ./compose.sh nextcloud up -d
+
+  sudo mkdir -p /srv/data/paperless/{data,media,export,consume}
+  ./compose.sh paperless up -d
+
+  sudo mkdir -p /srv/data/traefik/letsencrypt
+  sudo ufw allow from 192.168.0.0/24 to any port 80 proto tcp
+  sudo ufw allow from 192.168.0.0/24 to any port 443 proto tcp
+  ./compose.sh traefik up -d
+
+  sudo mkdir -p /srv/data/komodo-periphery/keys
+  # scp core.pub from silo first -- see komodo-periphery/docker-compose.yml
+  ./compose.sh komodo-periphery up -d
+  ```
+- Same `PERIPHERY_ONBOARDING_KEY` fill-in + `core.pub` copy + `up -d`
+  sequence needed on sieve and mochaPot whenever their Periphery agents
+  actually get brought up — not done as part of this entry, just built
+  and validated.
+- The ufw rules for `postgres-immich`/`valkey` above are scoped to
+  mochaPot's IP specifically, but carry the same Docker-NAT-bypasses-ufw
+  exposure as every other bridge-published port in this fleet — not
+  fixed here, same open fleet-wide gap.
+
+## 2026-09-04 (cont.) — end of session: planned full fleet poweroff/restart
+
+User Penguin ending tonight's session, powering off every node, restarting
+tomorrow. Confirmed this is low-risk: every service in this fleet is set
+to `restart: unless-stopped`, so a plain `sudo poweroff` per node (no
+need to `docker compose down` anything first) and a later reboot brings
+everything back automatically, as long as Docker itself is enabled to
+start on boot on each node (not independently confirmed this session --
+worth a `systemctl is-enabled docker` check on first restart). Advised
+power-on order tomorrow: sieve first (DNS/Authelia backbone), silo next
+(depends on sieve's Authelia), cellar/percolator/mochaPot in any order.
+
+### State snapshot, end of session (2026-09-04)
+
+- **sieve**: healthy. Authelia now publishes 9091 (added tonight).
+  Pi-hole DNS records for silo's/cellar's new hostnames still **not**
+  run for real (`pihole-dns-bootstrap.sh` needs `SILO_LAN_IP`/
+  `CELLAR_LAN_IP` filled into sieve's live `.env.local` first) --
+  everything tonight was verified via `curl -k -H "Host: ..."` against
+  raw IPs, not real browser DNS, except where confirmed otherwise (the
+  user did get a real browser hit on `scrutiny.whiskertreat.fyi` at one
+  point, so some DNS may already be working -- not fully audited).
+- **silo**: healthy except **Scrutiny is down** (`SCRUTINY_DISK_DEVICE`
+  never added to silo's live `.env.local` -- diagnosis and fix given
+  earlier tonight, not confirmed applied). Traefik/Authelia gate for
+  Komodo/Scrutiny/NetAlertX/Homepage/Speedtest-tracker confirmed working
+  end to end (real TLS, real ForwardAuth) as of tonight.
+- **cellar**: Vaultwarden+Caddy live with real HTTPS. Komodo Periphery
+  built, not yet brought up (blocked on a real onboarding key from
+  silo's Komodo UI + the unverified `core.pub` step).
+- **percolator**: compose files complete for every planned app
+  (postgres/valkey/homeassistant/nextcloud/paperless/traefik/
+  komodo-periphery) but **nothing has actually been brought up on this
+  node yet** -- the full first-time bring-up sequence was handed off
+  this session, not yet run (or run and not reported back -- unclear at
+  session end).
+- **mochaPot**: apps from earlier sessions presumably still not brought
+  up either (no report this session either way); Komodo Periphery built
+  tonight, not brought up.
+- **sieve**: Komodo Periphery built tonight (yes, sieve too), not
+  brought up.
+
+### Pending, next session
+
+- Confirm every node actually comes back after tomorrow's restart,
+  including Scrutiny specifically (the one known-broken piece).
+- Fill in `SILO_LAN_IP`/`CELLAR_LAN_IP` on sieve's live `.env.local` and
+  run `pihole-dns-bootstrap.sh` for real -- still the actual blocker for
+  real browser DNS across the board.
+- Percolator's first bring-up, if not completed tonight.
+- Komodo Periphery agents on cellar/percolator/sieve/mochaPot -- built,
+  none actually connected yet. Needs: silo's Komodo UI reachable to
+  generate onboarding keys, then the `core.pub` copy (unverified
+  mechanism, first real test whenever any of these connects) + `up -d`
+  on each.

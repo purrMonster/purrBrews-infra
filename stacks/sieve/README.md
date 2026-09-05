@@ -24,6 +24,11 @@ also the only node CrowdSec actually has anything to watch on right now
 full reasoning. Bring it up after `cloudflared` — see its own section
 below.
 
+**Plus komodo-periphery** (added 2026-09-04) — so silo's Komodo Core can
+manage sieve's own containers too, same as every other node's copy of
+this agent. No ordering dependency on anything else in this list; bring
+it up whenever.
+
 ## Ports in use on this host (added 2026-09-01)
 
 **Check this table before publishing a new port in any app's
@@ -392,6 +397,37 @@ hostname the *only* remaining way to reach several apps — this isn't
 optional cosmetic DNS, komodo.${DOMAIN} etc. and vault.${DOMAIN} won't
 resolve at all until this script has been run with `SILO_LAN_IP`/
 `CELLAR_LAN_IP` filled in on sieve's own `.env.local`.
+
+### komodo-periphery
+
+Added 2026-09-04, so silo's Komodo Core can see and manage sieve's
+containers too -- no Core/Mongo here, just the agent (see
+`komodo-periphery/docker-compose.yml`'s own header comment for the full
+architecture note, same pattern as cellar's/percolator's/mochaPot's own
+copies of this file). No `networks:` block needed -- unlike
+pihole/lldap/authelia/traefik/headscale/crowdsec, this doesn't need
+`sieve_proxy`, it only ever talks outbound to silo.
+
+```sh
+sudo mkdir -p /srv/data/komodo-periphery/keys
+./compose.sh komodo-periphery up -d
+```
+
+**Two things need to be true before `up -d` actually connects, neither
+automatic**:
+
+1. `komodo-periphery/secrets.env.local`'s `PERIPHERY_ONBOARDING_KEY` needs
+   a real value from silo's Komodo UI (Settings -> the onboarding/servers
+   section).
+2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto sieve
+   first -- **this mechanism is unverified**, see
+   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
+   `scp` command.
+
+Same root-equivalent caveat as every other node's Periphery agent:
+whoever controls Core on silo has root-equivalent access to sieve once
+this is connected -- worth weighing against everything else sieve
+already guards (Authelia, lldap, Pi-hole).
 
 ## Known gaps / things to double-check before relying on this
 

@@ -226,6 +226,35 @@ directory at a missing bind-mount source). Write real `http.routers` /
 as `stacks/percolator/traefik/config/dynamic.yml.template` — once every
 app above is confirmed working directly, not before.
 
+### komodo-periphery
+
+Added 2026-09-04, so silo's Komodo Core can see and manage mochaPot's
+containers too -- no Core/Mongo here, just the agent (see
+`komodo-periphery/docker-compose.yml`'s own header comment for the full
+architecture note, same pattern as cellar's/percolator's/sieve's own
+copies of this file).
+
+```sh
+sudo mkdir -p /srv/data/komodo-periphery/keys
+./compose.sh komodo-periphery up -d
+```
+
+**Two things need to be true before `up -d` actually connects, neither
+automatic**:
+
+1. `komodo-periphery/secrets.env.local`'s `PERIPHERY_ONBOARDING_KEY` needs
+   a real value from silo's Komodo UI (Settings -> the onboarding/servers
+   section).
+2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto
+   mochaPot first -- **this mechanism is unverified**, see
+   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
+   `scp` command.
+
+Same outbound-only connection as every other node's Periphery (mochaPot ->
+silo on port 9120, no inbound rule needed on mochaPot) — and the same
+root-equivalent caveat: whoever controls Core on silo has root-equivalent
+access to mochaPot once this is connected.
+
 ## Known gaps / things to double-check before relying on this
 
 - The deploy-order guess in this file's intro is still unverified against

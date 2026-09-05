@@ -1,0 +1,85 @@
+# percolator's copy of ../../_templates/komodo-periphery/docker-compose.yml,
+# filled in 2026-09-04. Runs just the Periphery agent (no Core, no Mongo
+# -- those stay on silo, see ../../silo/komodo/docker-compose.yml) so
+# silo's Komodo Core can see and manage percolator's containers too.
+#
+# Image pin (2.3.2) confirmed matching silo's own live komodo-core AND
+# komodo-periphery pins as of 2026-09-04 -- keep these in sync manually,
+# Komodo doesn't manage its own agent's version.
+#
+# keys: bind-mounted to /srv/data/komodo-periphery/keys, NOT the
+# template's named `keys:` volume -- matches this fleet's established
+# /srv/data/<app> convention (same as cellar's own copy of this file,
+# the first one built).
+#
+# No networks: block -- unlike apps that need to reach each other within
+# percolator, this only ever talks outbound to silo over the LAN, so the
+# default bridge network is enough.
+#
+# Setup, once this is ready to bring up:
+#   1. sudo mkdir -p /srv/data/komodo-periphery/keys
+#   2. Get PERIPHERY_CORE_PUBLIC_KEYS's actual key material onto percolator.
+#      UNVERIFIED MECHANISM, flagging rather than asserting -- same
+#      caveat as cellar's copy of this file, not yet resolved by
+#      cellar's own first bring-up either as of this writing: on silo
+#      itself, komodo-core writes its own public key to
+#      /srv/data/komodo/keys/core.pub, and silo's own komodo-periphery
+#      reads that same file because they share a host and a bind mount
+#      (see silo's komodo/docker-compose.yml). percolator has no local Core
+#      to write that file, so the best-guess mechanism is: copy that
+#      exact file from silo to percolator --
+#        scp /srv/data/komodo/keys/core.pub percolator:/srv/data/komodo-periphery/keys/core.pub
+#      -- run from silo, over SSH, as whichever user has read access to
+#      silo's /srv/data. Confirm this actually works on first bring-up
+#      (across any of cellar/percolator/sieve/percolator, whichever gets
+#      there first) and update every copy of this comment with what was
+#      actually true.
+#   3. Get an onboarding key from silo's Komodo UI (Settings -> the
+#      relevant onboarding/servers section) -- see
+#      generate-secrets.sh's own comment for where this goes.
+#   4. ./compose.sh komodo-periphery up -d
+#
+# Same outbound-only connection direction as every other node's Periphery
+# (Periphery -> Core, a persistent outbound websocket, confirmed against
+# Komodo's v2.0.0 release notes) -- percolator needs OUTBOUND reachability to
+# silo on port 9120, no inbound firewall rule needed on percolator itself for
+# this. silo's own ufw rule for 9120 needs to allow percolator's LAN IP (or
+# already cover the LAN broadly) -- note this is one of the ports
+# confirmed affected by the Docker-NAT-bypasses-ufw gap (see the
+# runbook's 2026-09-04 entry), so in practice any ufw scoping here is
+# already moot until that gap is closed fleet-wide.
+#
+# Same root-equivalent caveat as every other Periphery agent in this
+# fleet: whoever controls Komodo Core (on silo) can run arbitrary
+# containers as root on percolator once this is connected. Not a
+# misconfiguration to fix, just what Periphery inherently grants.
+services:
+  komodo-periphery:
+    image: ghcr.io/moghtech/komodo-periphery:2.3.2
+    container_name: komodo-periphery
+    init: true
+    environment:
+      TZ: ${TZ}
+      PERIPHERY_CORE_ADDRESS: ws://${SILO_LAN_IP}:9120
+      PERIPHERY_CONNECT_AS: percolator
+      PERIPHERY_ONBOARDING_KEY: ${PERIPHERY_ONBOARDING_KEY}   # remove
+        # this line entirely (and re-run compose up -d) once percolator
+        # already exists as a Server in Komodo's UI -- it's only needed
+        # for the first-ever connection, same as the template's own note.
+      PERIPHERY_CORE_PUBLIC_KEYS: file:/config/keys/core.pub
+      PERIPHERY_ROOT_DIRECTORY: /etc/komodo
+      PERIPHERY_INCLUDE_DISK_MOUNTS: /etc/hostname
+    volumes:
+      - /srv/data/komodo-periphery/keys:/config/keys
+      # Unrestricted Docker socket access -- see this file's own header
+      # comment. Treat percolator's Komodo connection with the same care as
+      # a root SSH key.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /proc:/proc
+      # Must be the IDENTICAL path inside and outside the container or
+      # Docker "gets confused" (documented directly by the Komodo
+      # maintainers -- github.com/moghtech/komodo/discussions/180) --
+      # kept at the project's own default rather than moved under
+      # /srv/data, same reasoning as silo's own Periphery.
+      - /etc/komodo:/etc/komodo
+    restart: unless-stopped

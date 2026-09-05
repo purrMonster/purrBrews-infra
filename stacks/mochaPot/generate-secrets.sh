@@ -108,6 +108,15 @@ prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_IMAP_HOST"
 prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_SMTP_HOST" \
   "SMTP server (e.g. smtp.gmail.com:587)" "REPLACE_ME_smtp_host"
 
+log "komodo-periphery/secrets.env.local"
+# Added 2026-09-04, alongside pre-emptively building mochaPot's Komodo
+# Periphery agent (before it was ever brought up for the first time --
+# see komodo-periphery/docker-compose.yml's own comment). Real external
+# value from silo's Komodo UI, not generatable here -- same category as
+# roundcube's mail-provider values just above.
+prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
+  "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
+
 # jellyfin/, musicassistant/, immich/, freshrss/, mealie/, actualbudget/,
 # stirlingpdf/ have no secrets.env.local of their own -- either no auth
 # config exists at the compose level (first-run wizards/UI-set
