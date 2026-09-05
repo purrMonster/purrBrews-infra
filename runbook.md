@@ -1939,3 +1939,61 @@ sudo mkdir -p /srv/data/immich /srv/data/postgres-immich
 - mochaPot's own Komodo Periphery agent -- built, not yet brought up.
 - Scrutiny on silo, Pi-hole DNS records for real -- both still open,
   unrelated to this.
+
+## 2026-09-05 — postgres-paperless wouldn't start: postgres:18's new data-layout requirement
+
+Continuing percolator's bring-up after the per-app db restructure, above:
+`./compose.sh paperless up -d` created the containers but
+`postgres-paperless` came up unhealthy immediately, and `paperless` itself
+never started (`dependency failed to start: container postgres-paperless
+is unhealthy`). `docker logs postgres-paperless` gave a clear, named
+error:
+
+```
+Error: in 18+, these Docker images are configured to store database data in a
+       format which is compatible with "pg_ctlcluster"...
+       there appears to be PostgreSQL data in:
+         /var/lib/postgresql/data (unused mount/volume)
+```
+
+Root cause, confirmed against the image's own release notes (linked in
+the error, github.com/docker-library/postgres/pull/1259): starting with
+major version 18, the official Postgres image expects a single mount at
+the PARENT directory `/var/lib/postgresql`, and manages its own
+version-specific subdirectory (`18/docker`) underneath -- it explicitly
+refuses to start if it finds pre-existing data sitting directly at the
+old-convention path, `/var/lib/postgresql/data`. This fleet's
+`postgres-<app>/docker-compose.yml` convention (every other instance is
+on `postgres:16`) mounts directly at `.../data` -- fine for 16, wrong for
+18. Made worse here because `postgres-paperless` genuinely DID start
+successfully once already, this morning, under the pre-restructure shared
+`postgres/docker-compose.yml` (same image, same host path, same old-style
+mount) -- so `/srv/data/postgres-paperless` on percolator already has
+real (if paperless-app-empty) 18-format data sitting directly at the
+legacy path, which is exactly what the new image refuses to start
+against.
+
+Fix: `stacks/percolator/paperless/docker-compose.yml`'s `postgres-paperless`
+volume changed from `/srv/data/postgres-paperless:/var/lib/postgresql/data`
+to `/srv/data/postgres-paperless:/var/lib/postgresql` (one level up) --
+the image now creates its own `18/docker` subdirectory inside that host
+path. Comment added explaining why, for whoever eventually gives another
+app a Postgres major version 18+ image on this fleet.
+
+Since nothing had ever actually connected to `postgres-paperless` (paperless
+itself never got past its own dependency check), the existing data at the
+old path is safe to discard entirely -- no migration needed, just a clean
+re-init under the new mount shape.
+
+### To apply, on percolator
+
+```sh
+sudo docker rm -f postgres-paperless paperless 2>/dev/null
+sudo rm -rf /srv/data/postgres-paperless
+sudo mkdir -p /srv/data/postgres-paperless
+cd /opt/purrbrews/stacks/percolator
+git pull
+./compose.sh paperless up -d
+```
+
+Not yet re-run by the user as of this entry.

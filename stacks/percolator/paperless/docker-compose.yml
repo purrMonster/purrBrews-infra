@@ -85,8 +85,22 @@ services:
       POSTGRES_USER: ${PAPERLESS_DB_USERNAME}
       POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD}
       POSTGRES_DB: ${PAPERLESS_DB_DATABASE_NAME}
+    # Mounted at the PARENT dir, /var/lib/postgresql, NOT .../data --
+    # postgres:18+ changed its expected on-disk layout to a major-
+    # version-specific subdirectory (pg_ctlcluster-compatible), confirmed
+    # 2026-09-05 the hard way on first real bring-up: mounting directly at
+    # .../data (this fleet's convention for every other Postgres, all on
+    # 16) makes the 18 image refuse to start with "these Docker images
+    # are configured to store database data in a format which is
+    # compatible with pg_ctlcluster... there appears to be PostgreSQL
+    # data in /var/lib/postgresql/data (unused mount/volume)" --
+    # documented at github.com/docker-library/postgres/pull/1259. With
+    # this parent-dir mount, the image manages its own
+    # /var/lib/postgresql/18/docker subdirectory internally; the actual
+    # files land at /srv/data/postgres-paperless/18/docker on the host,
+    # one level deeper than this fleet's other Postgres instances.
     volumes:
-      - /srv/data/postgres-paperless:/var/lib/postgresql/data
+      - /srv/data/postgres-paperless:/var/lib/postgresql
     # No networks: block -- colocated with paperless in this same compose
     # file/project, so it reaches (and is reached by) paperless over the
     # default project network without needing percolator_net at all.
