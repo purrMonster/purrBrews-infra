@@ -2177,3 +2177,101 @@ as "add X to nodes A/B/C," explicitly re-check the FULL node list against
 the actual criterion being used (here: "has its own physical disk")
 rather than pattern-matching on whichever nodes happened to be under
 discussion most recently.
+
+## 2026-09-05 — cellar's real disks don't match initiation.txt
+
+User ran `lsblk` on cellar to fill in `scrutiny-collector`'s device paths
+(previous entry). Real hardware:
+
+```
+sda           238.5G  disk  /            (boots the OS)
+nvme0n1       476.9G  disk  /media/storage
+```
+
+This does NOT match initiation.txt's Section 17 load-distribution table,
+which documented cellar as "256GB NVMe + 1TB HDD" -- there is no HDD at
+all on this host, and the larger drive is an NVMe roughly half the
+documented size (476.9G vs a claimed 1TB). The smaller ~256GB figure DOES
+roughly match (238.5G), but it's `sda` (SATA/SCSI-style naming), not the
+NVMe the table assumed it to be -- the two drives' claimed types are
+effectively swapped from what was planned, and the capacity was
+overstated on the bigger one.
+
+Consequence worth flagging, not fixed here: cellar's whole role in the
+fleet plan ("cellar gets zero app containers because its HDD is the
+fleet's one I/O weak point," Section 17's own "Deliberately absent from
+this table" paragraph) was reasoned around a spinning disk that may not
+actually exist on this hardware. Both drives could be solid-state --
+unconfirmed either way, `sda`'s rotational status was never checked
+(`cat /sys/block/sda/queue/rotational`, `0`=SSD, `1`=HDD). If both are
+SSD/NVMe, the specific "protect the I/O-weak resource" rationale for
+keeping cellar app-container-free doesn't necessarily still apply --
+though there may be other good reasons to keep that decision anyway
+(RAM, its role as backup/archive target). Not resolved here -- just
+caught while filling in an unrelated field, same pattern as previous
+initiation.txt-vs-reality mismatches caught this project (percolator's
+missing SILO_LAN_IP, several stale README claims).
+
+Fixed for the immediate task: renamed
+`CELLAR_DISK_DEVICE_NVME`/`CELLAR_DISK_DEVICE_HDD` (named for an assumed,
+now-wrong role) to `CELLAR_DISK_DEVICE_SDA`/`CELLAR_DISK_DEVICE_NVME0`
+(named for the actual device), in
+`stacks/cellar/scrutiny-collector/docker-compose.yml`,
+`stacks/cellar/local.env.example`, and `stacks/cellar/README.md`. Real
+values: `/dev/sda` and `/dev/nvme0` (controller node, not the `nvme0n1`
+namespace device lsblk shows).
+
+### Still open
+
+- `sda`'s rotational status, and whether initiation.txt's Section 17
+  cellar rationale needs revisiting as a result.
+- percolator's and mochaPot's own disk paths still unconfirmed
+  (`PERCOLATOR_DISK_DEVICE_SSD`/`_NVME`, `MOCHAPOT_DISK_DEVICE_NVME`) --
+  worth running the same `lsblk` check there before assuming
+  initiation.txt's numbers for those two are any more accurate than
+  cellar's turned out to be.
+
+## 2026-09-05 — scrutiny-collector: no data in the hub UI until midnight, by default
+
+User brought up `scrutiny-collector` on all four nodes and asked how to
+view the data. Checked the image's own behavior before answering rather
+than assume "container is up" means "data is in the UI" -- confirmed via
+web search (AnalogJ/scrutiny's own repo issues and community setup guides,
+the primary TROUBLESHOOTING.md doc 404'd when fetched directly) that this
+image does NOT collect once on container start by default -- it only
+collects on its cron schedule, `COLLECTOR_CRON_SCHEDULE`, default
+midnight. A freshly-`up -d`'d collector genuinely shows nothing in silo's
+Scrutiny UI for up to 24 hours, with no error or indication anything's
+wrong -- "the container is up" and "this host's disks are visible on the
+hub" are unrelated facts with this image.
+
+Fixed by adding `COLLECTOR_RUN_STARTUP: "true"` to all four
+`scrutiny-collector/docker-compose.yml` files (sieve/cellar/percolator/
+mochaPot) -- forces an immediate collection on every container
+start/recreate, so bringing it up (or restarting it) is itself the test,
+not something you wait on separately.
+
+To view the data: `https://scrutiny.${DOMAIN}` (Traefik + Authelia on
+silo, already working). To pick up today's fix and get an immediate first
+data point without waiting for midnight:
+
+```sh
+git pull
+./compose.sh scrutiny-collector up -d
+```
+
+on each of the four nodes. If a host's disks still don't show up in the
+UI after that, check `docker logs scrutiny-collector --tail 30` on that
+node for a connection error to `${SILO_LAN_IP}:8080` before assuming the
+image itself is broken -- silo's scrutiny port-republish and this
+collector's `COLLECTOR_API_ENDPOINT` are the two things most likely to be
+misconfigured if it's silent.
+
+Not verified against the primary source: a manual one-off trigger command
+was found in a community wiki (not AnalogJ's own docs, which 404'd on
+this attempt) -- not included in any README as a result, since this
+project's own discipline is not asserting unconfirmed commands as fact.
+If you need a manual trigger before the next `up -d`, check what's
+actually inside the collector container first (`docker exec
+scrutiny-collector ls /opt/scrutiny/bin/` or similar) rather than trust
+an unverified path.

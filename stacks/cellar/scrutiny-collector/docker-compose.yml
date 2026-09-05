@@ -30,20 +30,32 @@ services:
       # not a free lunch, this app has zero auth of its own on either
       # end).
       COLLECTOR_API_ENDPOINT: http://${SILO_LAN_IP}:8080
+      # Added 2026-09-05, found the hard way right after first bring-up:
+      # by default this image ONLY collects on its cron schedule
+      # (COLLECTOR_CRON_SCHEDULE, default midnight) -- it does NOT run
+      # once immediately on container start. Without this, "the
+      # container is up" and "silo's Scrutiny UI actually shows this
+      # host's disks" are two different, unrelated facts, and the gap
+      # between them is up to 24 hours with zero indication anything's
+      # wrong. COLLECTOR_RUN_STARTUP=true forces an immediate run on
+      # every container start/recreate, so `up -d` alone is enough to
+      # verify this actually works, not just that it's scheduled to
+      # eventually.
+      COLLECTOR_RUN_STARTUP: "true"
     volumes:
       - /run/udev:/run/udev:ro
     devices:
-      # Cellar has TWO physical disks per initiation.txt (256GB NVMe +
-      # 1TB HDD) -- confirm the REAL device paths on cellar itself before
-      # first bring-up, same discipline as silo's own SCRUTINY_DISK_DEVICE:
-      #   lsblk -d -o NAME,TYPE,SIZE,MODEL
-      # For the NVMe, use the controller node (/dev/nvme0), NOT the
-      # namespace block device (/dev/nvme0n1) -- confirmed via silo's own
-      # README note on this exact gotcha. Values below are placeholders
-      # from .env.local, not hardcoded, so a disk swap only needs an
-      # .env.local edit -- same pattern as SCRUTINY_DISK_DEVICE.
-      - ${CELLAR_DISK_DEVICE_NVME}
-      - ${CELLAR_DISK_DEVICE_HDD}
+      # Confirmed via lsblk on cellar itself, 2026-09-05 -- and it does
+      # NOT match initiation.txt's documented "256GB NVMe + 1TB HDD" at
+      # all: real hardware is a 238.5G disk (`sda`, boots the OS, "/")
+      # and a 476.9G NVMe (`nvme0n1`, mounted at /media/storage) -- no
+      # HDD found, and the "big" drive is roughly half the documented
+      # size. Named after the actual device, not an assumed role/type,
+      # to avoid re-asserting something unconfirmed. For the NVMe, using
+      # the controller node (/dev/nvme0), NOT the namespace block device
+      # lsblk shows (/dev/nvme0n1) -- same gotcha silo's own README flags.
+      - ${CELLAR_DISK_DEVICE_SDA}
+      - ${CELLAR_DISK_DEVICE_NVME0}
     restart: unless-stopped
     # No web UI, no port to publish -- this container only ever makes
     # outbound requests to silo. Nothing to route through Traefik/Authelia

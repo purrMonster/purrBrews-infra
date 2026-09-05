@@ -172,17 +172,28 @@ Added 2026-09-05 -- Scrutiny's own "hub and spoke" multi-host pattern
 existing omnibus Scrutiny container is the hub, this pushes cellar's
 SMART data to it over the LAN instead of running its own web UI.
 
-**Fill in real disk device paths first** -- `.env.local`'s
-`CELLAR_DISK_DEVICE_NVME`/`CELLAR_DISK_DEVICE_HDD` are placeholders,
-confirm the real values on cellar itself:
+**Real disk paths confirmed 2026-09-05** via `lsblk` on cellar itself --
+and they do NOT match initiation.txt's documented "256GB NVMe + 1TB HDD":
+actual hardware is a 238.5G disk (`sda`, boots the OS) and a 476.9G NVMe
+(`nvme0n1`, mounted at `/media/storage`) -- no HDD found at all. Worth
+revisiting cellar's own "protects its weakest resource (I/O under load)"
+rationale in initiation.txt's Section 17 at some point, since that
+reasoning assumed a spinning disk that may not exist -- not fixed here,
+just flagged.
+
+Add to cellar's `.env.local` (renamed from the original `_NVME`/`_HDD`
+guess to match the actual device names, not an assumed role):
 
 ```sh
-lsblk -d -o NAME,TYPE,SIZE,MODEL
+echo 'CELLAR_DISK_DEVICE_SDA=/dev/sda' | sudo tee -a .env.local
+echo 'CELLAR_DISK_DEVICE_NVME0=/dev/nvme0' | sudo tee -a .env.local
 ```
 
-then
+(NVMe uses the controller node `/dev/nvme0`, not the namespace block
+device `lsblk` shows, `/dev/nvme0n1`.) Then:
 
 ```sh
+git pull
 ./compose.sh scrutiny-collector up -d
 ```
 
