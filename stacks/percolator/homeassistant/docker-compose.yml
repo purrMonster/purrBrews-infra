@@ -24,6 +24,23 @@ services:
     depends_on:
       postgres-homeassistant:
         condition: service_healthy
+    # Routed through percolator's own Traefik as of 2026-09-05 -- no
+    # Authelia middleware here deliberately, at least for now: same
+    # reasoning as nextcloud's/paperless's own copies of this comment.
+    #
+    # loadbalancer.server.URL, not .port -- this is the one app in this
+    # file on network_mode: host, so it has no container-network IP for
+    # Traefik's docker provider to auto-discover (confirmed: Traefik's
+    # own docs call this out explicitly as a known limitation of host-
+    # networked containers). Pointing straight at PERCOLATOR_LAN_IP:8123
+    # sidesteps auto-discovery entirely -- Traefik's own container can
+    # still reach it fine, host ports are reachable from any bridge
+    # network on the same physical host.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.homeassistant.rule=Host(`homeassistant.${DOMAIN}`)"
+      - "traefik.http.routers.homeassistant.entrypoints=websecure"
+      - "traefik.http.services.homeassistant.loadbalancer.server.url=http://${PERCOLATOR_LAN_IP}:8123"
     restart: unless-stopped
     # No default credentials -- onboarding wizard on first visit to
     # http://<PERCOLATOR_LAN_IP>:8123, confirmed via HA's own install docs.
@@ -44,6 +61,21 @@ services:
     # that manual step is done -- functions fine either way, Postgres is
     # a scale/performance upgrade for the recorder specifically, not a
     # hard requirement to get HA running.
+    #
+    # ANOTHER manual step, needed now that Traefik sits in front of this
+    # (2026-09-05): Home Assistant refuses requests from a reverse proxy
+    # it doesn't explicitly trust -- confirmed via HA's own reverse-proxy
+    # docs, symptom is a "Login attempt or request with invalid
+    # authentication from a banned/untrusted proxy" error. Add to
+    # /srv/data/homeassistant/configuration.yaml:
+    #
+    #   http:
+    #     use_x_forwarded_for: true
+    #     trusted_proxies:
+    #       - ${PERCOLATOR_LAN_IP}
+    #
+    # then restart. Same category of gap as the recorder db_url above --
+    # config lives on disk, not in compose/env, so it can't be set here.
 
   postgres-homeassistant:
     # Colocated here as of 2026-09-05, moved out of the old shared

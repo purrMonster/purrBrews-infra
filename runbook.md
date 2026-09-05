@@ -1997,3 +1997,67 @@ git pull
 ```
 
 Not yet re-run by the user as of this entry.
+
+## 2026-09-05 — percolator's Traefik: "stuck" was actually idle, not broken
+
+After bringing Traefik up on percolator, `docker logs traefik` showed a
+clean startup but stalled forever after `Testing certificate renew...`
+with zero further output. Worked through it methodically: confirmed the
+Cloudflare token is valid and active (`.../tokens/verify` returned
+`"success":true`), confirmed `DOMAIN` in `.env.local` is a real value, re-
+checked logs after a wait -- still nothing. All of it checked out, which
+was the tell: there was nothing actually wrong.
+
+Root cause: at that point, `percolator/traefik/config/dynamic.yml.template`
+defined only the Authelia ForwardAuth middleware, no routers, and none of
+`nextcloud`/`paperless`/`homeassistant` had `traefik.enable=true` labels
+yet (deliberately deferred earlier, to confirm Traefik itself was healthy
+before touching those apps' compose files). With no router anywhere
+demanding a certificate, Traefik's on-demand ACME behavior had nothing to
+request -- `Testing certificate renew` checked the (empty) existing store,
+found nothing due for renewal, and correctly did nothing further. Silo's
+identical Traefik pattern worked immediately on startup only because
+silo's `dynamic.yml` already had five real routers wired up the moment it
+came up -- percolator, having none yet, looked identical in the logs to a
+genuinely broken DNS-01 setup, right up until a router actually exists.
+
+Fixed by adding `traefik.enable=true` + routing labels to all three apps
+(`stacks/percolator/{nextcloud,paperless,homeassistant}/docker-compose.yml`):
+
+- `nextcloud.${DOMAIN}` / `paperless.${DOMAIN}` / `homeassistant.${DOMAIN}`,
+  all on `entrypoints=websecure`.
+- No Authelia middleware on any of them, deliberately -- all three have
+  their own login, unlike silo's weak/no-auth tools. Revisit later as a
+  considered call, not an oversight.
+- `nextcloud`'s `NEXTCLOUD_TRUSTED_DOMAINS` gained `nextcloud.${DOMAIN}`
+  (space-separated list, kept `${PERCOLATOR_LAN_IP}` too).
+- `paperless`'s `PAPERLESS_URL` switched from
+  `http://${PERCOLATOR_LAN_IP}:8000` to `https://paperless.${DOMAIN}`
+  (single CSRF-trusted-origin value, confirmed via Paperless-ngx's own
+  docs -- not a list like Nextcloud's).
+- `homeassistant` needed a different label shape entirely:
+  `loadbalancer.server.url=http://${PERCOLATOR_LAN_IP}:8123` instead of
+  the usual `.server.port` -- it's the one app here on `network_mode:
+  host`, so Traefik's docker provider has no container-network IP to
+  auto-discover for it (a documented Traefik limitation for host-
+  networked containers, not specific to this fleet).
+
+Flagged, not fixed here -- two apps need one more manual step once each
+has actually run, since the relevant config is file-based, not
+env/compose-based: `nextcloud`'s `trusted_proxies`/`overwriteprotocol`/
+`overwritehost` in `config.php` (post-install-wizard only), and
+`homeassistant`'s `http: trusted_proxies` in `configuration.yaml`. Both
+apps will work for direct login either way; skipping these shows up as
+"untrusted proxy" errors / redirect loops specifically on requests that
+come through Traefik.
+
+### Still open
+
+- None of this re-applied on percolator yet -- next step is `git pull`
+  there, then `./compose.sh <app> up -d` for each of the three (picks up
+  the new labels on existing containers) and watching
+  `docker logs traefik -f` for the actual cert issuance this should now
+  trigger.
+- If it works for one, it should work for all three (same cert resolver,
+  same zone) -- but confirm at least the first one actually completes
+  before assuming the rest will too.

@@ -171,11 +171,38 @@ Internal-only reverse proxy for percolator's own apps — not sieve's
 tunnel-facing instance. `providers.docker.exposedByDefault=false` —
 confirmed this is the right default for a homelab host running several
 unrelated stacks on `percolator_net`; apps opt in per-container with
-`traefik.enable=true` (not yet added to nextcloud/paperless/homeassistant's
-own compose files — do that once Traefik itself is confirmed healthy, to
-avoid breaking their current direct-port access first). **When you do,
-use `traefik.http.routers.<name>.entrypoints=websecure`, not `web`** —
-see below for why.
+`traefik.enable=true`, which all three (`nextcloud`, `paperless`,
+`homeassistant`) now have as of 2026-09-05, added once Traefik itself was
+confirmed healthy (no errors on startup — but also nothing to actually
+test DNS-01 cert issuance against until at least one router existed; see
+the runbook's 2026-09-05 entry). All three use
+`traefik.http.routers.<name>.entrypoints=websecure`, not `web` — see
+below for why. `homeassistant`'s label set is different from the other
+two's: it's the one app here on `network_mode: host`, so it has no
+container-network IP for Traefik's docker provider to auto-discover —
+its `loadbalancer.server.url` points straight at
+`${PERCOLATOR_LAN_IP}:8123` instead of the usual `.server.port`, see that
+file's own comment.
+
+**No Authelia ForwardAuth on any of the three, deliberately, for now** —
+all three have their own native login, and none is the kind of tool (like
+silo's Scrutiny/NetAlertX/Komodo) that has weak or no auth of its own.
+Revisit adding `middlewares=authelia@file` to any of them later as a
+considered defense-in-depth call, not something missing by accident.
+
+**Each app needs one more manual step post-Traefik that couldn't be set
+via compose** — config that only exists once the app has actually run
+(`config.php`) or is file-based, not env-based:
+- `nextcloud`: `trusted_proxies`/`overwriteprotocol`/`overwritehost` in
+  `config.php`, after its first-run install wizard completes — see its
+  own compose file's comment.
+- `homeassistant`: `http: use_x_forwarded_for / trusted_proxies` in
+  `configuration.yaml` — see its own compose file's comment.
+- `paperless`: none needed — `PAPERLESS_URL` (env-settable) was enough.
+
+Skipping these on `nextcloud`/`homeassistant` won't break DNS-01/TLS
+itself, but expect "untrusted proxy" errors or redirect loops on actual
+app requests through Traefik until each is done.
 
 ForwardAuth calls sieve's Authelia directly over the LAN
 (`http://${SIEVE_LAN_IP}:9091/api/authz/forward-auth`, confirmed via

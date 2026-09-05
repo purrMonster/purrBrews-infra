@@ -15,7 +15,12 @@ services:
       # LAN IP itself works during setup; the real hostname gets added
       # once percolator's own Traefik + split-horizon DNS are wired up
       # (not done yet -- see traefik/ README notes).
-      NEXTCLOUD_TRUSTED_DOMAINS: ${PERCOLATOR_LAN_IP}
+      # Added nextcloud.${DOMAIN} 2026-09-05 alongside wiring this up to
+      # Traefik (see labels: below) -- Nextcloud rejects requests whose
+      # Host header isn't in this space-separated list, confirmed via its
+      # own admin docs. Kept PERCOLATOR_LAN_IP too so direct-IP access
+      # (bypassing Traefik entirely) still works if ever needed.
+      NEXTCLOUD_TRUSTED_DOMAINS: ${PERCOLATOR_LAN_IP} nextcloud.${DOMAIN}
       # Confirmed exact names 2026-09-03 via Nextcloud's own DockerHub docs
       # -- discrete vars, not a URL.
       POSTGRES_HOST: postgres-nextcloud
@@ -41,18 +46,28 @@ services:
     depends_on:
       postgres-nextcloud:
         condition: service_healthy
-    # No ports published yet -- routed through percolator's own Traefik
-    # instance once that's built (see traefik/), same as every other app
-    # in this file. Until then, reach it directly for initial setup via
-    # `docker exec` or a temporary port publish, not baked in permanently.
+    # Routed through percolator's own Traefik as of 2026-09-05 -- no
+    # Authelia middleware here deliberately, at least for now: Nextcloud
+    # already has its own login, and testing DNS-01 cert issuance on
+    # percolator for the first time is easier to diagnose without also
+    # debugging the ForwardAuth hop in the same test. Revisit adding
+    # `traefik.http.routers.nextcloud.middlewares=authelia@file` later as
+    # a deliberate defense-in-depth call, not an oversight if it's absent.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.nextcloud.rule=Host(`nextcloud.${DOMAIN}`)"
+      - "traefik.http.routers.nextcloud.entrypoints=websecure"
+      - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     restart: unless-stopped
-    # Known gap, not fixed here: `trusted_proxies`/`overwriteprotocol`/
-    # `overwritehost` (config.php keys, not env vars pre-install) aren't
-    # set yet -- confirmed via Nextcloud's own reverse-proxy admin docs
-    # this is required once Traefik sits in front of this, or the
-    # symptom is redirect loops / "not accessible" errors. Set these once
-    # traefik/ is built and this app is actually routed through it, not
-    # before -- config.php doesn't exist until after first install anyway.
+    # Known gap, STILL not fixed here even though Traefik is now actually
+    # routing to this (2026-09-05): `trusted_proxies`/`overwriteprotocol`/
+    # `overwritehost` (config.php keys, not env vars) still can't be set
+    # via compose -- config.php doesn't exist until after Nextcloud's own
+    # first-run install wizard completes. Do the install first (via
+    # nextcloud.${DOMAIN} through Traefik, or a temporary direct port --
+    # see this stack's README), THEN add those three keys to
+    # /srv/data/nextcloud/config/config.php, or expect redirect loops /
+    # "untrusted proxy" errors on every request that comes through Traefik.
 
   postgres-nextcloud:
     # Colocated here as of 2026-09-05, moved out of the old shared

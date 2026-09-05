@@ -28,9 +28,12 @@ services:
       # mochaPot: a value that changes across container recreations would
       # invalidate existing sessions/signed data.
       PAPERLESS_SECRET_KEY: ${PAPERLESS_SECRET_KEY}
-      # CSRF-trusted-origins equivalent -- needed once this is reachable
-      # by a real hostname through Traefik, not just the bare LAN IP.
-      PAPERLESS_URL: http://${PERCOLATOR_LAN_IP}:8000
+      # CSRF-trusted-origin -- updated 2026-09-05 to the real hostname
+      # now that Traefik actually routes here (see labels: below).
+      # Paperless-ngx's own docs confirm this is a single URL, not a
+      # list -- direct LAN-IP:8000 access was never published as a port
+      # anyway, so there's no second origin worth also trusting.
+      PAPERLESS_URL: https://paperless.${DOMAIN}
     volumes:
       - /srv/data/paperless/data:/usr/src/paperless/data
       - /srv/data/paperless/media:/usr/src/paperless/media
@@ -47,6 +50,16 @@ services:
     depends_on:
       postgres-paperless:
         condition: service_healthy
+    # Routed through percolator's own Traefik as of 2026-09-05 -- no
+    # Authelia middleware here deliberately, at least for now: same
+    # reasoning as nextcloud's own copy of this comment. Paperless-ngx's
+    # container listens on 8000 internally (its own default, confirmed
+    # via its reference compose), never published as a host port.
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.paperless.rule=Host(`paperless.${DOMAIN}`)"
+      - "traefik.http.routers.paperless.entrypoints=websecure"
+      - "traefik.http.services.paperless.loadbalancer.server.port=8000"
     restart: unless-stopped
     # Known gaps, not fixed here (2026-09-03):
     # - gotenberg/tika (document format conversion + text extraction for
