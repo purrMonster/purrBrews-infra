@@ -2154,3 +2154,26 @@ a real SATA/NVMe/SAS disk. Nothing to collect there.
 Not yet brought up anywhere. Next steps: confirm real disk paths on all
 three nodes, `./compose.sh scrutiny-collector up -d` on each, confirm
 silo's Scrutiny UI actually shows every disk fleet-wide.
+
+## 2026-09-05 — multi-host Scrutiny: sieve was missed, added
+
+Caught right after building cellar's/percolator's/mochaPot's
+`scrutiny-collector` containers: sieve has its own real disk too (256GB
+NVMe, per initiation.txt's load distribution table) and was left off
+entirely. Being the fleet's gateway node, or being architecturally
+"upstream" of silo in the deploy order, doesn't make sieve exempt from
+needing its own disk monitored -- only silo is exempt, because it's
+already the hub. User caught this with a one-word question ("sieve?")
+rather than it being noticed here first.
+
+Added `stacks/sieve/scrutiny-collector/docker-compose.yml` (same pattern
+as the other three, `SIEVE_DISK_DEVICE_NVME` placeholder in
+`local.env.example`), updated silo's own `scrutiny/docker-compose.yml`
+comment and `README.md` to name all four consumer nodes instead of three,
+and updated sieve's own `README.md` and `WEEKEND_PLAN.md` to match.
+
+Worth remembering for next time: when a fix or new capability is framed
+as "add X to nodes A/B/C," explicitly re-check the FULL node list against
+the actual criterion being used (here: "has its own physical disk")
+rather than pattern-matching on whichever nodes happened to be under
+discussion most recently.

@@ -437,6 +437,28 @@ whoever controls Core on silo has root-equivalent access to sieve once
 this is connected -- worth weighing against everything else sieve
 already guards (Authelia, lldap, Pi-hole).
 
+### scrutiny-collector
+
+Added 2026-09-05 (almost missed entirely -- see the runbook's 2026-09-05
+entry: the original multi-host Scrutiny rollout covered cellar/
+percolator/mochaPot and forgot sieve has its own real disk too). Same
+"hub and spoke" pattern, see `stacks/cellar/README.md`'s identical
+section for the full explanation. Fill in the real disk path first:
+
+```sh
+lsblk -d -o NAME,TYPE,SIZE,MODEL
+```
+
+into `.env.local`'s `SIEVE_DISK_DEVICE_NVME` (controller node
+`/dev/nvme0`, not `/dev/nvme0n1`), then:
+
+```sh
+./compose.sh scrutiny-collector up -d
+```
+
+Same silo-side prerequisite as every other node's copy: port 8080
+republished on silo's `scrutiny` service (done 2026-09-05).
+
 ## Known gaps / things to double-check before relying on this
 
 - **Image tags are pinned to what was current as of 2026-08-28.** Several

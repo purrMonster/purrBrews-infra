@@ -18,9 +18,11 @@ services:
                     # but harmless to leave if unsure.
     # Port 8080 republished as of 2026-09-05 -- was removed 2026-09-04
     # (see below for why), reinstated for a real reason: this is now the
-    # HUB for cellar's/percolator's/mochaPot's own scrutiny-collector
-    # containers (see each of those stacks' own scrutiny-collector/
-    # docker-compose.yml), which need to reach this omnibus container's
+    # HUB for sieve's/cellar's/percolator's/mochaPot's own
+    # scrutiny-collector containers (see each of those stacks' own
+    # scrutiny-collector/docker-compose.yml -- sieve's was nearly
+    # forgotten, added right after the other three, see the runbook's
+    # 2026-09-05 entry), which need to reach this omnibus container's
     # API over the LAN to push their SMART data -- Docker networks don't
     # span physical hosts, same reasoning as every other cross-host
     # exception in this fleet (Komodo's 9120, Authelia's 9091).

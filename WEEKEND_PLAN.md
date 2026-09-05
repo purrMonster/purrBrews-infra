@@ -150,14 +150,16 @@ config/docs, before building anything on the actual hardware.
       Scrutiny misconfiguration — don't let a real disk failure hide
       behind an assumed tooling bug.
 - [ ] **Multi-host Scrutiny (added 2026-09-05)** — compose files are
-      written for `cellar`/`percolator`/`mochaPot`'s `scrutiny-collector`,
-      and silo's own `scrutiny` republishes port 8080 as the hub. Still
-      needed: confirm real disk device paths via `lsblk` on each of the
-      three nodes (`.env.local` placeholders are unfilled), bring each
-      collector up, and confirm all disks show up in silo's Scrutiny UI.
-      Also: this reopened a deliberately-closed zero-auth port on silo —
-      worth actually resolving via the ufw gap fix above rather than
-      leaving it as a second accepted-risk port.
+      written for `sieve`/`cellar`/`percolator`/`mochaPot`'s
+      `scrutiny-collector` (sieve was nearly missed — it's a separate
+      physical host with its own disk too, silo being the hub doesn't
+      exempt it), and silo's own `scrutiny` republishes port 8080 as the
+      hub. Still needed: confirm real disk device paths via `lsblk` on
+      each of the four nodes (`.env.local` placeholders are unfilled),
+      bring each collector up, and confirm all disks show up in silo's
+      Scrutiny UI. Also: this reopened a deliberately-closed zero-auth
+      port on silo — worth actually resolving via the ufw gap fix above
+      rather than leaving it as a second accepted-risk port.
 
 ---
 
