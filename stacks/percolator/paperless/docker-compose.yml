@@ -16,7 +16,7 @@ services:
       PAPERLESS_DBNAME: ${PAPERLESS_DB_DATABASE_NAME}
       PAPERLESS_DBUSER: ${PAPERLESS_DB_USERNAME}
       PAPERLESS_DBPASS: ${PAPERLESS_DB_PASSWORD}
-      # One URL-format var, confirmed -- DB 1 on the shared valkey/
+      # One URL-format var, confirmed -- DB 1 on ../valkey's shared
       # instance, reserved for paperless when that file was built.
       PAPERLESS_REDIS: redis://valkey:6379/1
       # Env-var-driven admin creation -- confirmed no manage.py step
@@ -36,8 +36,17 @@ services:
       - /srv/data/paperless/media:/usr/src/paperless/media
       - /srv/data/paperless/export:/usr/src/paperless/export
       - /srv/data/paperless/consume:/usr/src/paperless/consume
+    # Still needs percolator_net -- NOT for postgres-paperless anymore
+    # (that's colocated below, reached over this file's own default
+    # project network), only to reach ../valkey/docker-compose.yml's
+    # shared instance, a separate compose project on the same host. See
+    # postgres-paperless's own comment below for why the database side of
+    # this dropped percolator_net entirely, 2026-09-05.
     networks:
       - percolator_net
+    depends_on:
+      postgres-paperless:
+        condition: service_healthy
     restart: unless-stopped
     # Known gaps, not fixed here (2026-09-03):
     # - gotenberg/tika (document format conversion + text extraction for
@@ -53,3 +62,47 @@ services:
     #   percolator's own local NVMe, not a network mount, so inotify
     #   (the default) should work fine -- PAPERLESS_CONSUMER_POLLING_INTERVAL
     #   only matters if that ever changes to a network-backed path.
+
+  postgres-paperless:
+    # Colocated here as of 2026-09-05, moved out of the old shared
+    # ../postgres/docker-compose.yml (deleted) -- see the runbook's
+    # 2026-09-05 entry: that file's 4-instances-in-one layout caused a
+    # real port collision between two unrelated apps' databases
+    # (postgres-immich and postgres-homeassistant), so every app on this
+    # fleet now gets its own dedicated db layer in its own folder instead,
+    # so a mistake made on one app's database config can't reach into an
+    # unrelated app's.
+    #
+    # Paperless-ngx's own official reference compose
+    # (docker/compose/docker-compose.postgres.yml) uses postgres:18 --
+    # matched here rather than defaulting to 16, since this is the
+    # specific version their own maintainers test against for a fresh
+    # deploy. Each app's own Postgres version choice is independent, they
+    # don't share a server.
+    image: postgres:18
+    container_name: postgres-paperless
+    environment:
+      POSTGRES_USER: ${PAPERLESS_DB_USERNAME}
+      POSTGRES_PASSWORD: ${PAPERLESS_DB_PASSWORD}
+      POSTGRES_DB: ${PAPERLESS_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-paperless:/var/lib/postgresql/data
+    # No networks: block -- colocated with paperless in this same compose
+    # file/project, so it reaches (and is reached by) paperless over the
+    # default project network without needing percolator_net at all.
+    # Fully private to this file -- nothing outside it can reach this
+    # database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PAPERLESS_DB_USERNAME} -d ${PAPERLESS_DB_DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  # Only still needed here for paperless (the app) to reach ../valkey's
+  # shared instance -- see paperless's own comment above. Created
+  # idempotently by ../compose.sh before this file is ever handed to
+  # `docker compose` -- see that script's own comment.
+  percolator_net:
+    external: true

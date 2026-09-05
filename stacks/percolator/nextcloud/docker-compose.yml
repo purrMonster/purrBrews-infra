@@ -24,14 +24,23 @@ services:
       POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
       # No Valkey-specific var exists -- confirmed Nextcloud points at
       # Valkey via these same Redis-named vars, since Valkey is wire-
-      # compatible. DB 2 on the shared valkey/ instance -- reserved for
-      # this in valkey/docker-compose.yml's own comment when it was built.
+      # compatible. DB 2 on ../valkey's shared instance -- reserved for
+      # this in that compose file's own comment when it was built.
       REDIS_HOST: valkey
       REDIS_HOST_PORT: "6379"
     volumes:
       - /srv/data/nextcloud:/var/www/html
+    # Still needs percolator_net -- NOT for postgres-nextcloud anymore
+    # (that's colocated below, reached over this file's own default
+    # project network), only to reach ../valkey/docker-compose.yml's
+    # shared instance, which is a separate compose project on the same
+    # host. See postgres-nextcloud's own comment below for why the
+    # database side of this dropped percolator_net entirely, 2026-09-05.
     networks:
       - percolator_net
+    depends_on:
+      postgres-nextcloud:
+        condition: service_healthy
     # No ports published yet -- routed through percolator's own Traefik
     # instance once that's built (see traefik/), same as every other app
     # in this file. Until then, reach it directly for initial setup via
@@ -44,3 +53,40 @@ services:
     # symptom is redirect loops / "not accessible" errors. Set these once
     # traefik/ is built and this app is actually routed through it, not
     # before -- config.php doesn't exist until after first install anyway.
+
+  postgres-nextcloud:
+    # Colocated here as of 2026-09-05, moved out of the old shared
+    # ../postgres/docker-compose.yml (deleted) -- see the runbook's
+    # 2026-09-05 entry: that file's 4-instances-in-one layout caused a
+    # real port collision between two unrelated apps' databases
+    # (postgres-immich and postgres-homeassistant), so every app on this
+    # fleet now gets its own dedicated db layer in its own folder instead,
+    # so a mistake made on one app's database config can't reach into an
+    # unrelated app's.
+    image: postgres:16
+    container_name: postgres-nextcloud
+    environment:
+      POSTGRES_USER: ${NEXTCLOUD_DB_USERNAME}
+      POSTGRES_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      POSTGRES_DB: ${NEXTCLOUD_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-nextcloud:/var/lib/postgresql/data
+    # No networks: block -- colocated with nextcloud in this same compose
+    # file/project, so it reaches (and is reached by) nextcloud over the
+    # default project network without needing percolator_net at all.
+    # Fully private to this file -- nothing outside it, including valkey
+    # or any other app on percolator, can reach this database.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${NEXTCLOUD_DB_USERNAME} -d ${NEXTCLOUD_DB_DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+networks:
+  # Only still needed here for nextcloud (the app) to reach ../valkey's
+  # shared instance -- see nextcloud's own comment above. Created
+  # idempotently by ../compose.sh before this file is ever handed to
+  # `docker compose` -- see that script's own comment.
+  percolator_net:
+    external: true

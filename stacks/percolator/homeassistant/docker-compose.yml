@@ -9,10 +9,9 @@ services:
     # without it is not supported... and will cause this integration to
     # be unable to discover Cast devices." Same mDNS-multicast-doesn't-
     # cross-bridge-networks reasoning as Music Assistant on mochaPot.
-    # Consequence: this container can't join percolator_net or resolve
-    # its container DNS names -- see postgres/docker-compose.yml's own
-    # comment on how postgres-homeassistant is reached instead
-    # (127.0.0.1:5432, published to loopback specifically for this).
+    # Consequence: this container can't join a bridge network or resolve
+    # container DNS names -- see postgres-homeassistant below for how its
+    # own database is reached instead (127.0.0.1, loopback).
     network_mode: host
     volumes:
       - /srv/data/homeassistant:/config
@@ -22,6 +21,9 @@ services:
       - /run/dbus:/run/dbus:ro
     environment:
       TZ: ${TZ}
+    depends_on:
+      postgres-homeassistant:
+        condition: service_healthy
     restart: unless-stopped
     # No default credentials -- onboarding wizard on first visit to
     # http://<PERCOLATOR_LAN_IP>:8123, confirmed via HA's own install docs.
@@ -30,15 +32,60 @@ services:
     # all. Confirmed 2026-09-03 via HA's own Recorder integration docs:
     # there is no env var for this, it's configuration.yaml-only, and HA
     # does not create the target database itself (already created here by
-    # generate-secrets.sh's postgres/ block + postgres/docker-compose.yml's
-    # POSTGRES_DB). After first boot, add to
+    # generate-secrets.sh's homeassistant/ block + postgres-homeassistant
+    # below). After first boot, add to
     # /srv/data/homeassistant/configuration.yaml:
     #
     #   recorder:
     #     db_url: postgresql://homeassistant:<HA_DB_PASSWORD from
-    #       ../postgres/secrets.env.local>@127.0.0.1:5432/homeassistant
+    #       ./secrets.env.local>@127.0.0.1:5432/homeassistant
     #
     # then restart the container. Left as SQLite (HA's own default) until
     # that manual step is done -- functions fine either way, Postgres is
     # a scale/performance upgrade for the recorder specifically, not a
     # hard requirement to get HA running.
+
+  postgres-homeassistant:
+    # Colocated here as of 2026-09-05, moved out of the old shared
+    # ../postgres/docker-compose.yml (deleted) -- see the runbook's
+    # 2026-09-05 entry for the full story: that file's 4-Postgres-
+    # instances-in-one layout caused a real port collision between this
+    # service and postgres-immich (both wanted host port 5432 -- see this
+    # file's own git history for the short-lived 5433 workaround). Rather
+    # than just patch that one collision, the decision was to give every
+    # app on this fleet its own dedicated db layer, colocated in its own
+    # app folder, so an edit made while thinking about one app's database
+    # can never again silently affect an unrelated app's.
+    image: postgres:16
+    container_name: postgres-homeassistant
+    environment:
+      POSTGRES_USER: ${HA_DB_USERNAME}
+      POSTGRES_PASSWORD: ${HA_DB_PASSWORD}
+      POSTGRES_DB: ${HA_DB_DATABASE_NAME}
+    volumes:
+      - /srv/data/postgres-homeassistant:/var/lib/postgresql/data
+    # No networks: block -- homeassistant itself can't join a bridge
+    # network anyway (network_mode: host, see above), and now that this
+    # lives in the SAME compose file/project as its only consumer, it
+    # doesn't need percolator_net either. Fully private to this file --
+    # nothing outside it can reach this database at all.
+    #
+    # Published to localhost ONLY -- Home Assistant needs network_mode:
+    # host, which means it can't resolve this container by hostname the
+    # way percolator_net apps do, so it reaches this via 127.0.0.1
+    # instead of a container name.
+    #
+    # Back on plain 5432 (was briefly 127.0.0.1:5433, 2026-09-05) -- that
+    # workaround only existed because postgres-immich's 0.0.0.0:5432 bind
+    # shared this host. Immich's whole db layer has since moved to
+    # mochaPot (see stacks/mochaPot/immich/docker-compose.yml), so nothing
+    # else on percolator ever binds port 5432 anymore -- the collision
+    # this dodged is now structurally impossible, not just avoided.
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HA_DB_USERNAME} -d ${HA_DB_DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped

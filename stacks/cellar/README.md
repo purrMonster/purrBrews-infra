@@ -156,9 +156,9 @@ automatic**:
    section) -- `generate-secrets.sh` prompts for it, same as caddy's
    Cloudflare token.
 2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto
-   cellar first -- **this mechanism is unverified**, see
-   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
-   `scp` command and why it isn't asserted as confirmed-correct.
+   cellar first -- **confirmed working 2026-09-05** (percolator/sieve/cellar all now show up as Servers in silo's Komodo UI), see
+   `komodo-periphery/docker-compose.yml`'s own comment for the `scp`
+   command and why it isn't asserted as confirmed-correct.
 
 Same outbound-only connection as every other node's Periphery (cellar ->
 silo on port 9120, no inbound rule needed on cellar) -- and same caveat
@@ -228,12 +228,6 @@ script itself is identical).
 
 ## Known gaps / things to double-check before relying on this
 
-- **Komodo Periphery's `PERIPHERY_CORE_PUBLIC_KEYS` provisioning is
-  unverified** -- the `scp core.pub from silo` mechanism in
-  `komodo-periphery/docker-compose.yml`'s own comment is a best guess
-  from how the same-host case works, not confirmed against Komodo's own
-  docs for a cross-host setup specifically. Confirm on first real
-  bring-up and correct that comment if it turns out to work differently.
 - **Vaultwarden has zero fallback access as of 2026-09-04** -- its old
   `http://<CELLAR_LAN_IP>:8000` is gone, and it's only reachable through
   `caddy` now. Until `caddy` is up AND sieve's Pi-hole has the

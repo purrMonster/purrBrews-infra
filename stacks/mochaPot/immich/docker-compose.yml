@@ -5,22 +5,24 @@ services:
     container_name: immich-server
     environment:
       TZ: ${TZ}
-      # Cross-host, not container-DNS -- Immich's DB (postgres-immich,
-      # VectorChord) and Redis-role service (valkey) both live on
-      # percolator, a different physical host. Confirmed 2026-09-03 via
-      # Immich's own "pre-existing postgres" docs that the discrete
-      # DB_HOSTNAME/etc vars (or a single DB_URL, either works) are how
-      # you point Immich at a database it doesn't manage itself.
-      DB_HOSTNAME: ${PERCOLATOR_LAN_IP}
+      # Colocated with its own Postgres+Valkey in THIS SAME FILE as of
+      # 2026-09-05 -- moved off percolator, see the runbook's 2026-09-05
+      # entry for the full reasoning. Container-name DNS now, not a
+      # cross-host LAN IP -- Immich's own "pre-existing postgres" docs
+      # confirm the discrete DB_HOSTNAME/etc vars work identically
+      # whether pointed at a local container or a remote host.
+      DB_HOSTNAME: postgres-immich
       DB_PORT: "5432"
       DB_USERNAME: ${IMMICH_DB_USERNAME}
       DB_PASSWORD: ${IMMICH_DB_PASSWORD}
       DB_DATABASE_NAME: ${IMMICH_DB_DATABASE_NAME}
-      REDIS_HOSTNAME: ${PERCOLATOR_LAN_IP}
+      REDIS_HOSTNAME: valkey
       REDIS_PORT: "6379"
-      # DB 0 -- the shared valkey instance's own default, matches what
-      # percolator/valkey/docker-compose.yml reserved for Immich.
-      REDIS_DBINDEX: "0"
+      # No REDIS_DBINDEX needed anymore -- when this shared percolator's
+      # valkey instance it needed DB 0 to avoid colliding with paperless/
+      # nextcloud's own indexes. Now dedicated to Immich alone (see valkey
+      # below), so the image's own default index is fine unnamespaced.
+      #
       # Confirmed 2026-09-03: this env var works but is officially
       # deprecated -- a maintainer states in GitHub Discussion #20686 that
       # ML worker config should go through Admin Settings -> Machine
@@ -39,11 +41,99 @@ services:
       - /srv/data/immich:/data
     ports:
       - "2283:2283"
+    depends_on:
+      postgres-immich:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
     restart: unless-stopped
-    # Known gap, not resolved here (2026-09-03): ROASTERY_TAILNET_IP isn't
-    # in local.env.example yet -- roastery's ML worker isn't built/running
-    # yet either (per initiation.txt, it's Ollama + GPU-accelerated Immich
-    # ML worker, reachable only via the Headscale tailnet, no public
-    # exposure). Fill in once that's actually stood up on roastery; Immich
-    # runs fine without it, just does inference in software/CPU fallback
-    # (or not at all) until then.
+    # Known gap, not resolved here (2026-09-03, still true 2026-09-05):
+    # ROASTERY_TAILNET_IP isn't in local.env.example yet -- roastery's ML
+    # worker isn't built/running yet either (per initiation.txt, it's
+    # Ollama + GPU-accelerated Immich ML worker, reachable only via the
+    # Headscale tailnet, no public exposure). Fill in once that's actually
+    # stood up on roastery; Immich runs fine without it, just does
+    # inference in software/CPU fallback (or not at all) until then.
+
+  postgres-immich:
+    # Moved here from percolator, 2026-09-05 -- see the runbook's
+    # 2026-09-05 entry for the full reasoning. Two things drove this,
+    # not one:
+    #  1. percolator's shared 4-instance postgres/docker-compose.yml
+    #     caused a real port collision between unrelated apps' databases
+    #     (this one and postgres-homeassistant both wanted host port
+    #     5432) -- the fleet-wide fix was giving every app its own
+    #     dedicated db layer, colocated in its own folder.
+    #  2. This was ALSO the one database needing cross-host LAN exposure
+    #     at all, because its server (immich-server, above) lives on a
+    #     different physical host from wherever the database lived.
+    #     Moving the database to sit next to its own server eliminates
+    #     that exposure entirely -- deliberate tradeoff, chosen over
+    #     continuing to publish a database port across the LAN: easier to
+    #     grow mochaPot's own storage than to keep managing that exposure.
+    #
+    # NOT generic pgvector/pgvector -- Immich ships and requires its own
+    # maintained image. Confirmed 2026-09-03 against immich-app/immich's
+    # current main-branch docker/docker-compose.yml AND its "pre-existing
+    # postgres" docs (docs.immich.app/administration/postgres-standalone):
+    # pgvecto.rs support was dropped in Immich v3.0 -- it needs VectorChord
+    # specifically now, not plain pgvector. Generic pgvector/pgvector would
+    # look like it works, then fail on Immich's own migrations.
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    container_name: postgres-immich
+    environment:
+      POSTGRES_USER: ${IMMICH_DB_USERNAME}
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
+      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
+      # From Immich's own current compose, verbatim -- not invented here.
+      POSTGRES_INITDB_ARGS: '--data-checksums'
+    volumes:
+      - /srv/data/postgres-immich:/var/lib/postgresql/data
+    # Immich's own docs are explicit: DB storage must be local disk, never
+    # a network share (NFS/SMB) -- mochaPot's own NVMe, same rule as it
+    # was on percolator.
+    shm_size: 128mb
+    # No ports:/networks: block -- fully private to this compose
+    # file/project, reached by immich-server over the default project
+    # network by container name. Nothing outside this file, including
+    # anything on percolator, can reach this database anymore -- the
+    # entire point of moving it here.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${IMMICH_DB_USERNAME} -d ${IMMICH_DB_DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    # Known gap, not fixed here (2026-09-03, still true 2026-09-05): a
+    # community vuln scan flagged ~90 CVEs in this image's OS layer
+    # (immich-app/immich discussion #23211); the Immich maintainer called
+    # most of it scanner noise on unused packages and declined to change
+    # base images. Real risk is low given this container is never exposed
+    # past this compose file's own default network, but worth knowing.
+
+  valkey:
+    # Dedicated to Immich alone as of 2026-09-05 -- moved off percolator's
+    # shared instance (see runbook's 2026-09-05 entry and
+    # stacks/percolator/valkey/docker-compose.yml's own comment). Immich
+    # was the one consumer that needed percolator's valkey published to
+    # the LAN at all; giving it its own local instance here removes that
+    # exposure completely, same reasoning as postgres-immich above.
+    #
+    # Valkey, not Redis -- confirmed 2026-09-03: Redis's 2024 license
+    # change moved it off OSI-approved open source. Immich's own current
+    # official compose already uses valkey/valkey:9 -- not a guess.
+    image: valkey/valkey:9
+    container_name: valkey
+    # No ports:/networks: block, no password configured -- same reasoning
+    # as postgres-immich above: fully private to this file, immich-server
+    # reaches it by container name on the default project network. No
+    # volume -- cache/queue only, ephemeral is correct, matches Immich's
+    # own official compose (no volume on its redis service either).
+    healthcheck:
+      # From Immich's own official compose, verbatim -- some images'
+      # healthchecks assume a differently-named binary, don't improvise.
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

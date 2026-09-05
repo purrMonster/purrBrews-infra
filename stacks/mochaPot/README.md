@@ -36,8 +36,9 @@ apps below.
   second run).
 - `local.env.example` — copy to `.env.local` and fill in. Has grown past
   the original minimal stub as apps were added: `MOCHAPOT_LAN_IP`, `TZ`,
-  `MOCHAPOT_RENDER_GID` (Jellyfin's Quick Sync group), `PERCOLATOR_LAN_IP`
-  (Immich's cross-host DB/Redis), `DOMAIN`.
+  `MOCHAPOT_RENDER_GID` (Jellyfin's Quick Sync group), `DOMAIN`.
+  (`PERCOLATOR_LAN_IP` was here for Immich's cross-host DB/Redis; removed
+  2026-09-05 once Immich's database layer moved onto this node itself.)
 - `.gitignore` — same rules as every other node: `.env.local`,
   `*/secrets.env.local`, and rendered `*/config/*` (except tracked
   `.template` sources) are never committed.
@@ -57,11 +58,11 @@ values by hand before first bring-up:
 - `MOCHAPOT_LAN_IP` — this host's own LAN IP.
 - `MOCHAPOT_RENDER_GID` — find it on mochaPot itself with
   `getent group render | cut -d: -f3`.
-- `PERCOLATOR_LAN_IP` — must match `stacks/percolator/.env.local`'s own
-  `PERCOLATOR_LAN_IP` exactly; Immich reaches its Postgres+VectorChord and
-  shared valkey instance there directly over the LAN (Docker networks
-  don't span hosts).
 - `DOMAIN` — same real domain every other node's `.env.local` uses.
+
+(`PERCOLATOR_LAN_IP` was removed 2026-09-05 — Immich's database layer
+moved onto this node itself, see its own section below, so nothing here
+needs percolator's LAN IP anymore.)
 
 `ROASTERY_TAILNET_IP` (Immich's ML worker endpoint) is deliberately not in
 `local.env.example` yet — roastery's GPU-accelerated ML worker isn't built.
@@ -105,16 +106,24 @@ flat network (no VLANs) for discovery to work.
 ### Immich (photos)
 
 ```
-sudo ./compose.sh immich up -d
+sudo mkdir -p /srv/data/immich /srv/data/postgres-immich
+./compose.sh immich up -d
 ```
 
 UI: `http://<mochaPot LAN IP>:2283`. First visit creates the admin
-account. Depends on percolator being up first — its Postgres
-(VectorChord-enabled) and shared valkey instance (DB index 0) are reached
-over the LAN via `PERCOLATOR_LAN_IP`, not container DNS, since Docker
-networks don't span physical hosts. Confirm percolator's `ufw` rules allow
-mochaPot's IP through on 5432/6379 (see stacks/percolator/README.md) before
-expecting this to connect.
+account. **Restructured 2026-09-05**: no longer depends on percolator at
+all — its own Postgres (VectorChord-enabled, `postgres-immich`) and its
+own dedicated Valkey instance now live colocated in this same
+`immich/docker-compose.yml`, reached by container name on this file's own
+default network. See the runbook's 2026-09-05 entry for why: percolator's
+old shared 4-instance Postgres compose file caused a real port collision,
+and rather than just patch that, Immich's whole database layer moved here
+instead — trading a database port that used to be published across the
+LAN for local storage growth on mochaPot instead (deliberate: easier to
+grow this node's storage than to keep managing that exposure).
+
+`PERCOLATOR_LAN_IP` is no longer needed for this — removed from
+`local.env.example` 2026-09-05.
 
 ML inference (`IMMICH_MACHINE_LEARNING_URL`) points at
 `${ROASTERY_TAILNET_IP}:3003`, which doesn't exist yet — Immich works
@@ -246,9 +255,9 @@ automatic**:
    a real value from silo's Komodo UI (Settings -> the onboarding/servers
    section).
 2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto
-   mochaPot first -- **this mechanism is unverified**, see
-   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
-   `scp` command.
+   mochaPot first -- confirmed working on cellar/percolator/sieve 2026-09-05 (all three now show up as Servers in silo's Komodo UI), though not yet tested on mochaPot specifically. See
+   `komodo-periphery/docker-compose.yml`'s own comment for the `scp`
+   command.
 
 Same outbound-only connection as every other node's Periphery (mochaPot ->
 silo on port 9120, no inbound rule needed on mochaPot) — and the same
@@ -265,10 +274,15 @@ access to mochaPot once this is connected.
   guarantees there isn't another one.
 - `ROASTERY_TAILNET_IP` isn't wired into `local.env.example` yet — add it
   once roastery's Immich ML worker actually exists.
-- Immich's cross-host reach into percolator's Postgres/valkey depends on
-  percolator's `ufw` rules already allowing mochaPot's specific LAN IP
-  through on 5432/6379 — confirm that's actually been applied there, not
-  just documented.
+- Immich's database layer (its own colocated Postgres+Valkey, see its
+  section above) is new as of 2026-09-05 and hasn't been run against real
+  hardware in this shape yet — first real test is whatever bring-up
+  happens next. It no longer depends on percolator or any LAN-crossing
+  `ufw` rule at all, which is the whole point of the move.
+- mochaPot's own storage may need growing over time to comfortably hold
+  Immich's database now that it's local here instead of on percolator's
+  larger fast-storage pool — a deliberate, known tradeoff (see the
+  runbook's 2026-09-05 entry), not an oversight.
 - If mochaPot will run a Komodo Periphery agent (so silo's Komodo Core can
   manage it), see `stacks/_templates/komodo-periphery/docker-compose.yml`
   — copy it into an app subdirectory here and fill in its `REPLACE_ME`

@@ -108,6 +108,16 @@ prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_IMAP_HOST"
 prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_SMTP_HOST" \
   "SMTP server (e.g. smtp.gmail.com:587)" "REPLACE_ME_smtp_host"
 
+log "immich/secrets.env.local"
+# Added 2026-09-05, moved here from percolator's old shared
+# postgres/secrets.env.local -- Immich's whole db layer (its own
+# dedicated postgres-immich + valkey, see immich/docker-compose.yml) now
+# lives colocated with immich-server itself, on this node, not
+# percolator. See the runbook's 2026-09-05 entry for why.
+set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_USERNAME" "immich"
+set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_DATABASE_NAME" "immich"
+
 log "komodo-periphery/secrets.env.local"
 # Added 2026-09-04, alongside pre-emptively building mochaPot's Komodo
 # Periphery agent (before it was ever brought up for the first time --
@@ -117,13 +127,13 @@ log "komodo-periphery/secrets.env.local"
 prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
   "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
 
-# jellyfin/, musicassistant/, immich/, freshrss/, mealie/, actualbudget/,
-# stirlingpdf/ have no secrets.env.local of their own -- either no auth
-# config exists at the compose level (first-run wizards/UI-set
-# passwords, confirmed per-app 2026-09-03), or (immich/) the real
-# secrets already live in postgres/secrets.env.local on PERCOLATOR, not
-# duplicated here. mochaPot's own traefik/ has none either, deliberately
-# deferred -- see its own docker-compose.yml comment.
+# jellyfin/, musicassistant/, freshrss/, mealie/, actualbudget/,
+# stirlingpdf/ have no secrets.env.local of their own -- no auth config
+# exists at the compose level, first-run wizards/UI-set passwords instead
+# (confirmed per-app 2026-09-03). immich/'s own db credentials are
+# generated above now, colocated on this node as of 2026-09-05. mochaPot's
+# own traefik/ has none either, deliberately deferred -- see its own
+# docker-compose.yml comment.
 # --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true

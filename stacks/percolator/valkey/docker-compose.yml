@@ -2,51 +2,39 @@ services:
   valkey:
     # Valkey, not Redis -- confirmed 2026-09-03: Redis's 2024 license
     # change moved it off OSI-approved open source, and the ecosystem has
-    # shifted accordingly. Immich's own current official compose already
-    # uses valkey/valkey:9, and Paperless-ngx's own official Postgres
-    # reference compose (docker/compose/docker-compose.postgres.yml) uses
-    # valkey/valkey:9-alpine as its broker -- not a guess, both consuming
-    # apps' own maintainers already ship this exact substitution. Redis-
-    # protocol wire-compatible, so every REDIS_*/PAPERLESS_REDIS env var
-    # below works unchanged against it.
+    # shifted accordingly. Paperless-ngx's own official Postgres reference
+    # compose (docker/compose/docker-compose.postgres.yml) uses
+    # valkey/valkey:9-alpine as its broker -- not a guess, its own
+    # maintainers already ship this exact substitution.
     image: valkey/valkey:9
     container_name: valkey
-    # One shared instance for percolator's apps, namespaced by Valkey's
-    # built-in logical DB indexes (0-15) rather than one container per
-    # consumer -- neither Immich's nor Paperless-ngx's docs explicitly
-    # endorse sharing, but nothing about either app's usage (ephemeral
-    # cache/queue, not persistent state) requires isolation either, and
-    # percolator's RAM is worth conserving. Reserved so far:
-    #   DB 0 -- immich   (REDIS_DBINDEX=0, the img's own default)
+    # One shared instance for percolator's SAME-HOST apps only, as of
+    # 2026-09-05 -- Immich's own dedicated valkey now lives on mochaPot,
+    # colocated with immich-server itself (see the runbook's 2026-09-05
+    # entry and stacks/mochaPot/immich/docker-compose.yml). Immich was
+    # the one consumer that needed this published to the LAN at all,
+    # since its server component lives on a different physical host --
+    # with it gone, this instance never needs to leave percolator_net
+    # again. No host port published anymore; nothing outside percolator
+    # can reach this at all.
+    #
+    # Namespaced by Valkey's built-in logical DB indexes rather than one
+    # container per consumer -- neither paperless-ngx's nor nextcloud's
+    # docs require isolation, and it's worth conserving percolator's RAM.
+    # Reserved:
     #   DB 1 -- paperless-ngx (PAPERLESS_REDIS=redis://valkey:6379/1)
-    #   DB 2 -- reserved for nextcloud, once its compose file is written
-    #           (nextcloud's docs recommend but don't require redis --
-    #           REDIS_HOST_PORT-style config will point it at DB 2)
-    # If a future consumer needs actual isolation (ACLs, its own
-    # persistence policy), split it into its own container then -- this
-    # is a resource-conservation choice, not a hard architectural one.
+    #   DB 2 -- reserved for nextcloud, once it's actually wired up
+    #           (nextcloud's docs recommend but don't require redis)
+    # DB 0 (Immich's former slot here) is free again.
     networks:
       - percolator_net
-    # Published to the LAN (2026-09-03, corrected from the original
-    # internal-only design) -- same reasoning as postgres-immich above:
-    # Immich's SERVER component lives on mochaPot, a different physical
-    # host, and Docker networks don't span hosts. Paperless-ngx/Nextcloud
-    # stay same-host on percolator so they don't need this, but the port
-    # is open to whoever reaches it now, not just them -- scope in ufw to
-    # mochaPot's LAN IP specifically.
-    ports:
-      - "6379:6379"
-    # No password configured -- matches Immich's own official compose
-    # (LAN-trust, same posture as everything else in this fleet once ufw-
-    # scoped -- not internal-network-only anymore now that this is
-    # published, worth revisiting if that trust model ever needs
-    # tightening).
-    # No volume -- cache/queue only, ephemeral is correct for both current
-    # consumers, matches Immich's own official compose (no volume on its
-    # redis service either).
+    # No ports: block anymore (removed 2026-09-05, see header comment
+    # above) and no password configured -- matches this fleet's LAN-trust
+    # posture for same-host, percolator_net-only services.
+    #
+    # No volume -- cache/queue only, ephemeral is correct for both
+    # current consumers.
     healthcheck:
-      # From Immich's own official compose, verbatim -- some images'
-      # healthchecks assume a differently-named binary, don't improvise.
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
@@ -54,5 +42,12 @@ services:
     restart: unless-stopped
 
 networks:
+  # Created idempotently by ../compose.sh before this file is ever handed
+  # to `docker compose` -- see that script's own comment for why percolator
+  # needs this at all (apps in separate compose projects reaching each
+  # other by hostname) and why it's not created here via a plain top-level
+  # `networks: percolator_net:` block instead. external: true here means
+  # this file only ever joins an already-existing network, never creates
+  # or owns it.
   percolator_net:
     external: true

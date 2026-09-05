@@ -19,21 +19,17 @@
 # Setup, once this is ready to bring up:
 #   1. sudo mkdir -p /srv/data/komodo-periphery/keys
 #   2. Get PERIPHERY_CORE_PUBLIC_KEYS's actual key material onto percolator.
-#      UNVERIFIED MECHANISM, flagging rather than asserting -- same
-#      caveat as cellar's copy of this file, not yet resolved by
-#      cellar's own first bring-up either as of this writing: on silo
-#      itself, komodo-core writes its own public key to
-#      /srv/data/komodo/keys/core.pub, and silo's own komodo-periphery
-#      reads that same file because they share a host and a bind mount
-#      (see silo's komodo/docker-compose.yml). percolator has no local Core
-#      to write that file, so the best-guess mechanism is: copy that
-#      exact file from silo to percolator --
+#      CONFIRMED WORKING 2026-09-05 (via percolator's, sieve's, and
+#      cellar's real first connections -- all three now show up as
+#      Servers in silo's Komodo UI): on silo itself, komodo-core writes
+#      its own public key to /srv/data/komodo/keys/core.pub, and silo's
+#      own komodo-periphery reads that same file because they share a
+#      host and a bind mount (see silo's komodo/docker-compose.yml).
+#      percolator has no local Core to write that file, so copy that exact
+#      file from silo to percolator --
 #        scp /srv/data/komodo/keys/core.pub percolator:/srv/data/komodo-periphery/keys/core.pub
 #      -- run from silo, over SSH, as whichever user has read access to
-#      silo's /srv/data. Confirm this actually works on first bring-up
-#      (across any of cellar/percolator/sieve/percolator, whichever gets
-#      there first) and update every copy of this comment with what was
-#      actually true.
+#      silo's /srv/data.
 #   3. Get an onboarding key from silo's Komodo UI (Settings -> the
 #      relevant onboarding/servers section) -- see
 #      generate-secrets.sh's own comment for where this goes.

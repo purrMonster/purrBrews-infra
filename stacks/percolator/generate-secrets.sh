@@ -92,33 +92,37 @@ prompt_if_placeholder() {
 
 # --- Per-app secrets go here ------------------------------------------
 
-# One file for all 4 instances -- matches the single postgres/docker-
-# compose.yml serving all 4.
-log "postgres/secrets.env.local"
-set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_USERNAME" "immich"
-set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_PASSWORD" "$(rand 32)"
-set_if_absent "${DIR}/postgres/secrets.env.local" "IMMICH_DB_DATABASE_NAME" "immich"
-set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_USERNAME" "homeassistant"
-set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_PASSWORD" "$(rand 32)"
-set_if_absent "${DIR}/postgres/secrets.env.local" "HA_DB_DATABASE_NAME" "homeassistant"
-set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_USERNAME" "nextcloud"
-set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_PASSWORD" "$(rand 32)"
-set_if_absent "${DIR}/postgres/secrets.env.local" "NEXTCLOUD_DB_DATABASE_NAME" "nextcloud"
-set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_USERNAME" "paperless"
-set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_PASSWORD" "$(rand 32)"
-set_if_absent "${DIR}/postgres/secrets.env.local" "PAPERLESS_DB_DATABASE_NAME" "paperless"
+# Restructured 2026-09-05 -- each app's db credentials now live in that
+# app's OWN secrets.env.local, colocated with its own docker-compose.yml,
+# not a single shared postgres/secrets.env.local anymore. See the
+# runbook's 2026-09-05 entry: the old single-file-for-4-instances layout
+# is what let postgres-immich and postgres-homeassistant collide on host
+# port 5432 without anyone noticing -- splitting this up is part of the
+# same fix. IMMICH_DB_* moved entirely to mochaPot's own
+# generate-secrets.sh -- Immich's whole db layer (postgres + valkey) now
+# lives there, colocated with immich-server itself.
+
+log "homeassistant/secrets.env.local"
+set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_USERNAME" "homeassistant"
+set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_DATABASE_NAME" "homeassistant"
 
 # valkey/ has no secrets.env.local of its own -- no auth configured (see
-# that compose file's own comment: matches Immich's and Paperless-ngx's
-# own official compose files, internal-network trust only, never exposed
+# that compose file's own comment: same-host-only trust, never exposed
 # past percolator_net). Nothing to generate there.
 
 log "nextcloud/secrets.env.local"
 set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_ADMIN_PASSWORD" "$(rand 16)"
+set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_USERNAME" "nextcloud"
+set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_DATABASE_NAME" "nextcloud"
 
 log "paperless/secrets.env.local"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_ADMIN_PASSWORD" "$(rand 16)"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_SECRET_KEY" "$(rand 32)"
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_USERNAME" "paperless"
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_PASSWORD" "$(rand 32)"
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_DATABASE_NAME" "paperless"
 
 log "traefik/secrets.env.local"
 # Added 2026-09-04, alongside pre-emptively giving percolator's Traefik
@@ -141,12 +145,13 @@ log "komodo-periphery/secrets.env.local"
 prompt_if_placeholder "${DIR}/komodo-periphery/secrets.env.local" "PERIPHERY_ONBOARDING_KEY" \
   "Komodo onboarding key (from silo's Komodo UI -> Settings)" "REPLACE_ME_onboarding_key"
 
-# homeassistant/ has no secrets.env.local -- no compose-level DB config
-# exists for HA (see homeassistant/docker-compose.yml's own comment: the
-# recorder DB is configuration.yaml-only, provisioned manually after first
-# boot, not through this script). ForwardAuth's only per-node value is
-# SIEVE_LAN_IP, which lives in .env.local (not a secret) since
-# render-configs.sh needs it at template-render time, not
+# homeassistant/'s HA_DB_* credentials are generated above now (for its
+# colocated postgres-homeassistant) -- what's still NOT generated here is
+# the recorder's configuration.yaml wiring itself, which stays a manual
+# post-first-boot step (see homeassistant/docker-compose.yml's own
+# comment: HA doesn't support this via compose/env at all). ForwardAuth's
+# only per-node value is SIEVE_LAN_IP, which lives in .env.local (not a
+# secret) since render-configs.sh needs it at template-render time, not
 # generate-secrets.sh.
 # --------------------------------------------------------------------------
 

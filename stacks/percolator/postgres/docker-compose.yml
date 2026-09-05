@@ -62,11 +62,22 @@ services:
     # docs: mDNS-based device discovery doesn't work without it), which
     # means it can't resolve percolator_net container DNS names the way
     # nextcloud/paperless do -- host networking bypasses Docker's embedded
-    # DNS entirely. So HA reaches this one via 127.0.0.1:5432 instead of
-    # a hostname. Bound to loopback only, not the LAN -- HA is the only
+    # DNS entirely. So HA reaches this one via 127.0.0.1 instead of a
+    # hostname. Bound to loopback only, not the LAN -- HA is the only
     # intended client, and it's on the same host.
+    #
+    # Host port is 5433, NOT 5432 -- discovered the hard way on first
+    # bring-up 2026-09-05: postgres-immich above already binds
+    # `0.0.0.0:5432` (deliberately, for mochaPot's cross-host Immich
+    # access), and a `0.0.0.0` bind claims the ENTIRE port across every
+    # interface, including loopback -- so this container's own
+    # `127.0.0.1:5432` collided with it at the Docker/OS port-allocation
+    # level despite the different interface scope, and failed to start
+    # (`Bind for 0.0.0.0:5432 failed: port is already allocated`). Moved
+    # to 5433 to dodge the collision; update ../../README.md's recorder
+    # `db_url` instructions if this ever moves again.
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
     restart: unless-stopped
 
   postgres-nextcloud:

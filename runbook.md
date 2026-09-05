@@ -1775,3 +1775,167 @@ power-on order tomorrow: sieve first (DNS/Authelia backbone), silo next
   generate onboarding keys, then the `core.pub` copy (unverified
   mechanism, first real test whenever any of these connects) + `up -d`
   on each.
+
+## 2026-09-05 — morning check-in
+
+User Penguin reports percolator's `komodo-periphery` is up. Confirming
+whether that means fully connected (shows as a Server in silo's Komodo
+UI) or just the container running -- the `core.pub` cross-host
+provisioning step was flagged unverified last night, so this is the
+first real signal on whether that mechanism actually works.
+
+## 2026-09-05 (cont.) — core.pub cross-host provisioning confirmed working
+
+User Penguin confirmed: silo's Komodo UI shows percolator, sieve, and
+cellar all connected as Servers (alongside silo itself). The `scp
+core.pub from silo` mechanism -- flagged as an unverified best-guess in
+every Periphery agent's compose file last night, since Komodo's own docs
+only clearly cover the same-host case -- turns out to be exactly right
+for the cross-host case too.
+
+Corrected all four copies of `komodo-periphery/docker-compose.yml`
+(cellar, percolator, sieve, mochaPot) and their READMEs' matching
+bullets to say "confirmed working 2026-09-05" instead of "unverified" --
+mochaPot's still notes it hasn't been tested there specifically, since
+that node's Periphery agent hasn't been brought up yet. Removed cellar's
+now-resolved Known-gaps bullet for this entirely rather than leaving a
+stale "unverified" note standing next to three working examples of it.
+
+### Still open
+
+- mochaPot's own Periphery agent -- built, not yet brought up.
+- Percolator's *other* apps (postgres/valkey/homeassistant/nextcloud/
+  paperless/traefik) -- status not yet reported back this morning;
+  komodo-periphery being up doesn't confirm those.
+- Scrutiny on silo, Pi-hole DNS records for real -- both still open from
+  last night, unrelated to this.
+
+## 2026-09-05 — percolator's postgres port collision (5432 x2), fixed
+
+Percolator's first real app bring-up started this morning:
+`./compose.sh postgres up -d`. Three of four containers started fine;
+`postgres-homeassistant` failed:
+
+```
+Error response from daemon: failed to set up container networking:
+driver failed programming external connectivity on endpoint
+postgres-homeassistant: Bind for 0.0.0.0:5432 failed: port is already
+allocated
+```
+
+Root cause: two containers in `postgres/docker-compose.yml` both wanted
+host port 5432 -- `postgres-immich` binds `0.0.0.0:5432` (deliberate,
+2026-09-03, for mochaPot's cross-host Immich server) and
+`postgres-homeassistant` binds `127.0.0.1:5432` (deliberate, for HA's
+`network_mode: host` which can't use `percolator_net` container DNS).
+Each binding was independently correct reasoning on the day it was
+added, but nobody cross-checked that they'd share a port number on the
+same host -- and a `0.0.0.0` bind claims the ENTIRE port across every
+interface, including loopback, so `127.0.0.1:5432` collided with it
+despite the different interface scope. Same category of gap as the
+CrowdSec/Speedtest-tracker port-table collision caught earlier in this
+project, just not caught proactively this time.
+
+Fix: moved `postgres-homeassistant` off 5432 entirely, onto
+`127.0.0.1:5433:5432` (loopback still, just a different host-side port).
+No collision with anything else on percolator as of this writing.
+Updated:
+- `stacks/percolator/postgres/docker-compose.yml` -- the port mapping
+  and its comment, explaining the collision for whoever reads this next.
+- `stacks/percolator/README.md` -- the postgres section's port-summary
+  paragraph (was stale in two directions: an old "none of the four
+  publish a port" line predating `postgres-immich`'s own port, and a
+  newer "only postgres-immich publishes a port" line predating
+  `postgres-homeassistant`'s), the `### homeassistant` section's
+  explanation, and the recorder `db_url` example (now `@127.0.0.1:5433`).
+
+Not yet re-run by the user -- next step is `./compose.sh postgres up -d`
+again on percolator, then continuing the bring-up sequence: valkey,
+homeassistant, nextcloud, paperless, traefik (komodo-periphery already
+confirmed up).
+
+## 2026-09-05 — per-app db layer (reversing centralized Postgres), Immich's db moved to mochaPot
+
+Follow-up to this morning's port-collision entry, above. Rather than just
+fix that one collision, decided to reverse the underlying design: no more
+shared `postgres/docker-compose.yml` on percolator serving four unrelated
+apps. Two changes, made together:
+
+1. **Every app gets its own db layer, colocated in its own compose file.**
+   `homeassistant/`, `nextcloud/`, `paperless/` on percolator each now
+   define their app service AND their own dedicated `postgres-<app>`
+   service side by side, in the same file. `percolator/postgres/` is gone
+   (superseded by these three; not deleted from the repo by Claude --
+   `device_bash` can't delete files in this session without a separate
+   permission grant, so it's still on disk at
+   `stacks/percolator/postgres/` -- remove it with a normal `git rm -r`
+   when committing this change). Blast radius is now real: a mistake made
+   on one app's database config can't reach an unrelated app's anymore,
+   and `./compose.sh <app> down` only ever touches that one app's data,
+   not three others' too.
+
+2. **Immich's whole db layer (Postgres + its own dedicated Valkey) moved
+   from percolator to mochaPot**, colocated with `immich-server` itself in
+   `stacks/mochaPot/immich/docker-compose.yml`. Immich was the one
+   database that needed cross-host LAN exposure at all -- its server
+   lives on mochaPot, a different physical host, so its Postgres/Valkey
+   had to publish real host ports (`0.0.0.0:5432`, `0.0.0.0:6379`) for it
+   to reach them, which is also what caused this morning's collision in
+   the first place. Explicit tradeoff, User Penguin's call: easier to
+   grow mochaPot's own storage over time than to keep managing database
+   ports published across the LAN. mochaPot has the same 16GB RAM as
+   percolator; the original reason its Postgres wasn't there from the
+   start (initiation.txt Section 18.6) was percolator's larger fast-
+   storage pool (1.25TB across two drives vs mochaPot's single 512GB
+   NVMe) -- worth watching as Immich's library grows, may need a real
+   storage upgrade on mochaPot eventually, but not a blocker today.
+
+percolator's `valkey/` (still shared, but now only by same-host paperless/
+nextcloud) dropped its LAN-published port entirely as a result -- nothing
+on percolator needs cross-host database access anymore, so nothing on
+percolator publishes a database port to the LAN anymore either.
+
+Updated: `stacks/percolator/{homeassistant,nextcloud,paperless,valkey}/docker-compose.yml`,
+`stacks/mochaPot/immich/docker-compose.yml`, both nodes'
+`generate-secrets.sh` (IMMICH_DB_* moved from percolator's to mochaPot's),
+`stacks/mochaPot/local.env.example` (`PERCOLATOR_LAN_IP` removed, no
+longer needed), both nodes' `README.md`, and `initiation.txt` (Section 17/
+18.6's centralized-db decision marked superseded, following the same
+inline-correction style as Section 19.3's own SOPS+age reversal).
+
+### Migration steps, since percolator's postgres/valkey were already
+### partially brought up this morning (all fresh/empty -- nothing had
+### connected to any of them yet, safe to tear down and recreate)
+
+On **percolator**:
+```sh
+cd /opt/purrbrews/stacks/percolator
+./compose.sh postgres down          # tears down the now-superseded shared stack
+git pull                            # picks up the restructured compose files
+./generate-secrets.sh               # writes homeassistant/nextcloud/paperless's own DB creds
+./compose.sh valkey up -d           # no LAN port anymore, same-host only now
+./compose.sh homeassistant up -d    # brings up HA + its own postgres-homeassistant together
+./compose.sh nextcloud up -d        # brings up nextcloud + its own postgres-nextcloud together
+./compose.sh paperless up -d        # brings up paperless + its own postgres-paperless together
+sudo ufw delete allow from <mochaPot's LAN IP> to any port 5432 proto tcp   # if it was ever added
+sudo ufw delete allow from <mochaPot's LAN IP> to any port 6379 proto tcp   # if it was ever added
+```
+
+On **mochaPot** (once its Postgres-holding immich/ is ready to bring up):
+```sh
+cd /opt/purrbrews/stacks/mochaPot
+git pull
+./generate-secrets.sh               # prompts/writes immich/secrets.env.local's IMMICH_DB_*
+sudo mkdir -p /srv/data/immich /srv/data/postgres-immich
+./compose.sh immich up -d           # brings up immich-server + its own postgres-immich + its own valkey
+```
+
+### Still open
+
+- None of the above has been run for real yet -- next step is the user
+  doing so on percolator and mochaPot.
+- Continuing percolator's original bring-up sequence after this:
+  traefik (komodo-periphery already confirmed up).
+- mochaPot's own Komodo Periphery agent -- built, not yet brought up.
+- Scrutiny on silo, Pi-hole DNS records for real -- both still open,
+  unrelated to this.

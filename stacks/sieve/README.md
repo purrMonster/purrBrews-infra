@@ -420,9 +420,9 @@ automatic**:
    a real value from silo's Komodo UI (Settings -> the onboarding/servers
    section).
 2. `PERIPHERY_CORE_PUBLIC_KEYS` needs silo's `core.pub` copied onto sieve
-   first -- **this mechanism is unverified**, see
-   `komodo-periphery/docker-compose.yml`'s own comment for the best-guess
-   `scp` command.
+   first -- **confirmed working 2026-09-05** (percolator/sieve/cellar all now show up as Servers in silo's Komodo UI), see
+   `komodo-periphery/docker-compose.yml`'s own comment for the `scp`
+   command.
 
 Same root-equivalent caveat as every other node's Periphery agent:
 whoever controls Core on silo has root-equivalent access to sieve once
