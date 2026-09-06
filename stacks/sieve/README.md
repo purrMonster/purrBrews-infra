@@ -487,10 +487,20 @@ every one of those clients depends on.
    ```
    Never regenerate this once any client is in real use — every
    already-issued token/signature breaks if the signing key changes.
-2. **Run `./generate-secrets.sh`** — it now also generates
-   `AUTHELIA_OIDC_HMAC_SECRET`, and for every client app a plaintext
-   `<APP>_OIDC_CLIENT_SECRET` plus its PBKDF2 hash
-   (`<APP>_OIDC_CLIENT_SECRET_HASH`, via `docker run
+   **Not mounted into the container** — CORRECTED 2026-09-06, the first
+   version of this setup tried that via a `key_path` config field that
+   doesn't exist in Authelia's actual schema (crashed on first real
+   bring-up: "configuration key not expected"). `generate-secrets.sh`
+   (next step) reads this file directly off disk and embeds its content
+   into `configuration.yml` instead — see
+   `authelia/config/configuration.yml.template`'s own comment on the
+   `jwks` block for the mechanics (a one-line, backslash-n-escaped copy
+   inside a double-quoted YAML string, since a real multi-line PEM breaks
+   a YAML block scalar once envsubst substitutes it in).
+2. **Run `./generate-secrets.sh`** — it now also reads that PEM file into
+   `AUTHELIA_OIDC_JWK_PRIVATE_KEY`, generates `AUTHELIA_OIDC_HMAC_SECRET`,
+   and for every client app a plaintext `<APP>_OIDC_CLIENT_SECRET` plus
+   its PBKDF2 hash (`<APP>_OIDC_CLIENT_SECRET_HASH`, via `docker run
    authelia/authelia:4.39.20 authelia crypto hash generate pbkdf2`
    under the hood — needs docker, which sieve already has for Authelia
    itself). The hash is what `configuration.yml.template` actually uses;
@@ -499,7 +509,8 @@ every one of those clients depends on.
    table tells you exactly which value to paste into which
    `<app>/secrets.env.local` on which OTHER node. Headscale is the one
    exception (same node as Authelia) — handled automatically, no copying
-   needed.
+   needed. If step 1 hasn't been done yet, this step will tell you and
+   skip the JWK part rather than failing silently.
 3. **Copy each plaintext secret to its own node**, per the table the
    script printed, then re-run *that node's* `generate-secrets.sh` so it
    stops flagging the value as still-needed.
