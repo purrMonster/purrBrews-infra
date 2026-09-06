@@ -13,6 +13,7 @@ set -euo pipefail
 
 FILE="$1"
 KEY="$2"
+FORCE="${3:-}"
 VALUE="$(cat)"
 
 mkdir -p "$(dirname "$FILE")"
@@ -21,8 +22,8 @@ chmod 600 "$FILE"
 
 if grep -qE "^${KEY}=" "$FILE" 2>/dev/null; then
   CURRENT="$(grep -E "^${KEY}=" "$FILE" | tail -n1 | cut -d= -f2-)"
-  if [[ -n "$CURRENT" && "$CURRENT" != REPLACE_ME* ]]; then
-    echo "SKIP: ${KEY} already set in ${FILE} -- leaving it alone"
+  if [[ "$FORCE" != "--force" && -n "$CURRENT" && "$CURRENT" != REPLACE_ME* ]]; then
+    echo "SKIP: ${KEY} already set in ${FILE} -- leaving it alone (pass --force to overwrite, e.g. when rotating a secret that turned out wrong)"
     exit 0
   fi
   sed -i "/^${KEY}=/d" "$FILE"

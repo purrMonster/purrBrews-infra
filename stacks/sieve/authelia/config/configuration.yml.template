@@ -140,7 +140,18 @@ identity_providers:
 
       - client_id: 'mealie'
         client_name: 'Mealie'
-        client_secret: '${MEALIE_OIDC_CLIENT_SECRET_HASH}'
+        # TEMPORARY 2026-09-06 -- switched from the PBKDF2 HASH to the
+        # PLAINTEXT secret as a live test for a suspected Authelia bug
+        # (see github.com/authelia/authelia/issues/6932 -- a hashed OIDC
+        # client_secret can be misdetected as plaintext internally and
+        # rejected at the token endpoint with "did not match" even when
+        # the hash is 100% valid, confirmed independently via `authelia
+        # crypto hash validate`). If this fixes the login, revert to the
+        # hash once the upstream bug is confirmed fixed in our pinned
+        # version (4.39.20), or leave plaintext here permanently and
+        # accept the reduced at-rest protection for this one field --
+        # decide once confirmed. NOT yet reverted.
+        client_secret: '${MEALIE_OIDC_CLIENT_SECRET}'
         public: false
         authorization_policy: 'one_factor'
         require_pkce: true

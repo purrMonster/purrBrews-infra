@@ -67,13 +67,14 @@ APPS=(
 )
 
 DRY_RUN=false
+FORCE=""
 FILTER=()
 for arg in "$@"; do
-  if [[ "$arg" == "--dry-run" ]]; then
-    DRY_RUN=true
-  else
-    FILTER+=("$arg")
-  fi
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --force) FORCE="--force" ;;
+    *) FILTER+=("$arg") ;;
+  esac
 done
 
 declare -A helper_deployed
@@ -119,7 +120,7 @@ for entry in "${APPS[@]}"; do
   fi
 
   if ! ssh "${SSH_OPTS[@]}" "${SSH_USER}@${node}.lan" \
-      "~/.purrbrews-set-secret.sh '${remote_path}' '${prefix}_OIDC_CLIENT_SECRET'" <<< "$value"; then
+      "~/.purrbrews-set-secret.sh '${remote_path}' '${prefix}_OIDC_CLIENT_SECRET' ${FORCE}" <<< "$value"; then
     echo "    ! failed to reach or update ${node}.lan -- fall back to a manual copy for this one"
   fi
 done
