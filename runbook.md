@@ -2630,3 +2630,19 @@ Every compose file touched was YAML-validated (dummy-substituting `${VAR}` place
 - Nothing has been tested against a real login flow yet — this entire entry is "config written and internally consistent," not "confirmed working." Expect at least one `invalid_client`/redirect-mismatch round of debugging per app, same as every other first-bring-up in this project.
 - Whether to pursue the unofficial n8n reverse-proxy/oauth2-proxy SSO workaround is still undecided.
 - Headplane (a community Headscale admin UI with its own separate OIDC login, distinct from Headscale's own node-enrollment OIDC) was surfaced during research as a possible future addition — not built, no admin UI exists for Headscale in this fleet today.
+
+## 2026-09-06 — Authelia OIDC foundation: `key_path` config bug, found and fixed on first real bring-up
+
+First real bring-up of the OIDC config from the entry above crashed immediately: `configuration key not expected: identity_providers.oidc.jwks[].key_path`, plus every client failing `option 'client_secret' is required` (expected — secrets hadn't been generated yet at that point). The `key_path` field doesn't exist in Authelia's actual schema — it wants the real key content under `key`, not a path. That was a mistake in what got written, not a config drift or environment issue.
+
+Real constraint that shaped the fix: a raw multi-line PEM can't go directly into a YAML block scalar in `configuration.yml.template`, because `render-configs.sh` renders it via `envsubst`, which is pure text substitution with no idea about YAML indentation — a multi-line env var's 2nd+ lines land at column 0 and break the block scalar's required consistent indentation.
+
+Fix: store the PEM as ONE line in `authelia/secrets.env.local`, with literal `\n` two-character sequences standing in for real newlines (`generate-secrets.sh` now derives this automatically from the real `/srv/data/authelia/oidc/private.pem` via `sed ':a;N;$!ba;s/\n/\\n/g'`), then reference it inside a **double-quoted** YAML string in the template (`key: "${AUTHELIA_OIDC_JWK_PRIVATE_KEY}"`). YAML's own double-quote escaping turns `\n` back into real newlines at parse time — entirely on one line, so envsubst never touches an actual line break. Verified end-to-end before handing it back for a second real attempt (generated a real test RSA key, ran it through the exact escape → template → parse pipeline, confirmed byte-for-byte round-trip) — this is why the second attempt worked clean.
+
+Also dropped the `/srv/data/authelia/oidc:/config/oidc:ro` bind mount from `authelia/docker-compose.yml` — no longer needed now that the key's content is embedded directly into `configuration.yml` rather than read from a mounted file at runtime. The raw `private.pem` still exists on disk (source of truth for regeneration), just isn't mounted into the container anymore.
+
+Confirmed fully working on the second attempt: container reports `(healthy)`, and `curl https://authelia.${DOMAIN}/.well-known/openid-configuration` returns a real discovery document (issuer, jwks_uri, authorization_endpoint, token_endpoint all present).
+
+### Still open
+
+- Same list as the entry above — this was just the JWKS-key sub-step. Secret handoff to the other five nodes and per-app login testing haven't started yet.

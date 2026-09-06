@@ -514,6 +514,19 @@ every one of those clients depends on.
 3. **Copy each plaintext secret to its own node**, per the table the
    script printed, then re-run *that node's* `generate-secrets.sh` so it
    stops flagging the value as still-needed.
+   **Or automate it**: `./oidc-secret-sync.sh` pushes every plaintext
+   secret out over SSH itself (added 2026-09-06, since sieve's SSH key is
+   already authorized as `barista` on every other node) — the value is
+   piped through SSH's own stdin into a small idempotent helper script on
+   the remote end, never appearing on a command line, in shell history,
+   or in an intermediate file on either side. `./oidc-secret-sync.sh --dry-run`
+   shows what it would do without touching anything; pass one or more app
+   names (e.g. `./oidc-secret-sync.sh vikunja immich`) to limit it. Falls
+   back gracefully per-app if a node can't be reached — the manual table
+   above still works for whatever it couldn't push. roastery is
+   included but its SSH setup isn't independently confirmed the way the
+   five Debian nodes' are (it's your own Windows/WSL2 machine, not a
+   fleet node) — if that row fails, copy Jellyfin's secret by hand.
 4. **Run `./render-configs.sh`** on sieve, then recreate the `authelia`
    container (`./compose.sh authelia up -d`, or however you're bringing
    it up) so it picks up the new `identity_providers.oidc` block and the
