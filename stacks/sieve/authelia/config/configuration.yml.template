@@ -13,7 +13,12 @@ server:
   address: 'tcp://0.0.0.0:9091'
 
 log:
-  level: info
+  # TEMPORARILY debug, 2026-09-06 -- info level doesn't log per-request
+  # OIDC client-auth failure reasons (needed to debug Mealie's
+  # invalid_client error at the token endpoint). REVERT TO info once the
+  # OIDC rollout's login testing is done -- debug is noisy and shouldn't
+  # stay on long-term.
+  level: debug
 
 authentication_backend:
   ldap:
