@@ -49,5 +49,42 @@ dns:
       - 1.1.1.1
       - 1.0.0.1
 
+# OIDC -- authenticates NODE ENROLLMENT ("tailscale up" login) against
+# Authelia, added 2026-09-06. This is NOT a web admin UI login (headscale
+# has none of its own) -- it only affects how a device joins the tailnet;
+# nodes already enrolled via pre-auth key are completely unaffected.
+# pkce.enabled defaults to false in headscale itself -- must be turned on
+# here to match the require_pkce: true set on this client in
+# authelia/config/configuration.yml.template, or the OIDC handshake fails.
+oidc:
+  only_start_if_oidc_is_available: false
+  # false, not headscale's own suggested true -- true means this ENTIRE
+  # daemon refuses to start at all if Authelia is unreachable at boot,
+  # which would take down every already-enrolled node's coordination
+  # server over an Authelia hiccup, not just block new enrollments.
+  # Already-joined nodes don't re-contact the IdP until their session
+  # expires or someone forces re-auth, so there's little upside to the
+  # stricter setting here -- confirmed via headscale's own OIDC reference
+  # docs (headscale.net/stable/ref/oidc/).
+  issuer: "https://authelia.${DOMAIN}"
+  client_id: "headscale"
+  # Plaintext, not a file path -- unlike Authelia's client_secret
+  # (a PBKDF2 hash full of literal $ characters, which envsubst would
+  # mangle), this is a plain random string with no special characters,
+  # so the normal ${VAR}-from-secrets.env.local pattern is safe here.
+  client_secret: '${HEADSCALE_OIDC_CLIENT_SECRET}'
+  scope: ["openid", "profile", "email", "groups"]
+  pkce:
+    enabled: true
+    method: "S256"
+  # Uncomment and edit once you've decided who should be allowed to
+  # enroll a NEW device -- omitted for now so existing pre-auth-key-based
+  # enrollment isn't accidentally narrowed by an empty/wrong filter.
+  # Confirmed limitation from headscale's own docs: these groups/users
+  # gate enrollment only, they can't be referenced inside headscale's own
+  # ACL/grants policy language.
+  # allowed_groups:
+  #   - "headscale_users"
+
 log:
   level: info

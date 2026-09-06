@@ -64,6 +64,31 @@ services:
     # No default credentials -- first-run setup wizard, same as
     # mochaPot's original file confirmed via Jellyfin's own docs.
     #
+    # OIDC login via Authelia, added 2026-09-06 -- Jellyfin core has no
+    # built-in OIDC; needs the community "SSO-Auth" plugin
+    # (9p4/jellyfin-plugin-sso). IMPORTANT: that plugin was ARCHIVED by
+    # its own author 2026-05-12 ("tired of working on this after all the
+    # years") -- no maintained fork is named anywhere. Adopting this
+    # means adopting an unmaintained plugin; keep local login working as
+    # a real fallback, not a formality.
+    # Install: Admin Dashboard -> Plugins -> Repositories, add
+    #   https://raw.githubusercontent.com/9p4/jellyfin-plugin-sso/manifest-release/manifest.json
+    # then install "SSO Authentication" from the catalog and restart.
+    # Configure (Admin Dashboard -> Plugins -> SSO-Auth): OID Endpoint
+    # https://authelia.${DOMAIN}, Client ID "jellyfin", Client Secret =
+    # JELLYFIN_OIDC_CLIENT_SECRET from jellyfin/secrets.env.local
+    # (generated on sieve, see README.md), Scopes "openid profile
+    # groups". Known bug: the plugin's Pushed Authorization Request
+    # handling can loop against Authelia -- if login loops, disable
+    # "Pushed Authorization Requests" and enable "HTTPS Scheme Override"
+    # in the plugin's own settings.
+    # No DOMAIN/HTTPS front end exists for this container at all (LAN-
+    # only, plain http on this node's own IP:8096, see the "LAN-reachable
+    # by design" comment above) -- the redirect URI Authelia's client
+    # config expects is a placeholder (see
+    # sieve/authelia/config/configuration.yml.template) that needs the
+    # real reachable address substituted in before this works.
+    #
     # LAN-reachable by design, unlike immich-ml's tailnet-only binding --
     # see local.env.example's note on why: Jellyfin has real
     # authentication, immich-ml has none. Still never port-forwarded past

@@ -4,6 +4,20 @@ services:
     container_name: actualbudget
     environment:
       TZ: ${TZ}
+      # OIDC login via Authelia, added 2026-09-06 -- confirmed exact env
+      # vars via actualbudget.org/docs/config/oauth-auth/.
+      # OWNERSHIP RISK, straight from that doc: the FIRST user to
+      # complete OIDC login automatically becomes this server's owner,
+      # permanently -- there is no UI way to change it afterward. Decide
+      # who logs in first before enabling ACTUAL_OPENID_ENFORCE, or leave
+      # it unset (below) and log in once via OIDC deliberately first,
+      # with the existing web-UI password setup left as-is until then.
+      ACTUAL_OPENID_DISCOVERY_URL: https://authelia.${DOMAIN}
+      ACTUAL_OPENID_CLIENT_ID: actual-budget
+      ACTUAL_OPENID_CLIENT_SECRET: ${ACTUALBUDGET_OIDC_CLIENT_SECRET}
+      ACTUAL_OPENID_SERVER_HOSTNAME: https://actualbudget.${DOMAIN}
+      ACTUAL_OPENID_AUTH_METHOD: openid
+      ACTUAL_USER_CREATION_MODE: login
     volumes:
       - /srv/data/actualbudget:/data
     ports:

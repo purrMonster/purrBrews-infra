@@ -101,6 +101,14 @@ log "vaultwarden/secrets.env.local"
 # /vaultwarden hash`, which needs the container already running --
 # chicken-and-egg, can't be scripted here).
 set_if_absent "${DIR}/vaultwarden/secrets.env.local" "VAULTWARDEN_ADMIN_TOKEN" "$(rand 32)"
+# OIDC client secret -- generated on sieve (Authelia's own node), not
+# here. Paste the value sieve's generate-secrets.sh prints in its "OIDC
+# client secrets" summary table, then re-run this script -- see
+# cellar/README.md. Also confirm your running Vaultwarden version is
+# >=1.35.0 before flipping SSO_ENABLED on -- this stack pins
+# vaultwarden/server:latest, which needs a one-time version check, not
+# an assumption.
+set_if_absent "${DIR}/vaultwarden/secrets.env.local" "VAULTWARDEN_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 log "smb/secrets.env.local"
 set_if_absent "${DIR}/smb/secrets.env.local" "SMB_BARISTA_PASSWORD" "$(rand 16)"

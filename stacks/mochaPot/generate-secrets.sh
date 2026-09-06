@@ -93,6 +93,12 @@ prompt_if_placeholder() {
 
 log "vikunja/secrets.env.local"
 set_if_absent "${DIR}/vikunja/secrets.env.local" "VIKUNJA_SERVICE_SECRET" "$(rand 32)"
+# OIDC client secret -- generated on sieve (Authelia's own node), not
+# here. Paste the value sieve's generate-secrets.sh prints in its "OIDC
+# client secrets" summary table, then re-run this script -- see
+# mochaPot/README.md.
+set_if_absent "${DIR}/vikunja/secrets.env.local" "VIKUNJA_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
+
 
 log "n8n/secrets.env.local"
 # Pinned, not left to auto-generate -- see n8n/docker-compose.yml's own
@@ -109,6 +115,12 @@ prompt_if_placeholder "${DIR}/roundcube/secrets.env.local" "ROUNDCUBE_SMTP_HOST"
   "SMTP server (e.g. smtp.gmail.com:587)" "REPLACE_ME_smtp_host"
 
 log "immich/secrets.env.local"
+# OIDC client secret -- generated on sieve, same handoff as vikunja's
+# above. Immich itself has no env var for this (its OIDC config is
+# Admin-UI-only, Administration -> Settings -> OAuth) -- kept here purely
+# so the real value is recorded somewhere locally for you to paste into
+# that UI, not because any compose file reads it.
+set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 # Added 2026-09-05, moved here from percolator's old shared
 # postgres/secrets.env.local -- Immich's whole db layer (its own
 # dedicated postgres-immich + valkey, see immich/docker-compose.yml) now
@@ -117,6 +129,20 @@ log "immich/secrets.env.local"
 set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_USERNAME" "immich"
 set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_PASSWORD" "$(rand 32)"
 set_if_absent "${DIR}/immich/secrets.env.local" "IMMICH_DB_DATABASE_NAME" "immich"
+
+log "mealie/secrets.env.local"
+# OIDC client secret -- generated on sieve, same handoff pattern as
+# vikunja's above.
+set_if_absent "${DIR}/mealie/secrets.env.local" "MEALIE_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
+
+log "freshrss/secrets.env.local"
+set_if_absent "${DIR}/freshrss/secrets.env.local" "FRESHRSS_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
+# Unlike the client secret, this one is FreshRSS's own local session
+# crypto key -- never shared with Authelia, generatable right here.
+set_if_absent "${DIR}/freshrss/secrets.env.local" "FRESHRSS_OIDC_CRYPTO_KEY" "$(rand 32)"
+
+log "actualbudget/secrets.env.local"
+set_if_absent "${DIR}/actualbudget/secrets.env.local" "ACTUALBUDGET_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 log "komodo-periphery/secrets.env.local"
 # Added 2026-09-04, alongside pre-emptively building mochaPot's Komodo
@@ -138,11 +164,14 @@ prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
   "Cloudflare API token (Zone:DNS:Edit on \${DOMAIN}'s zone)" "REPLACE_ME_cf_token"
 
 # jellyfin/ moved to roastery 2026-09-05, no secrets.env.local here.
-# musicassistant/, freshrss/, mealie/, actualbudget/, stirlingpdf/ have no
-# secrets.env.local of their own -- no auth config exists at the compose
-# level, first-run wizards/UI-set passwords instead (confirmed per-app
-# 2026-09-03). immich/'s own db credentials are generated above now,
-# colocated on this node as of 2026-09-05.
+# musicassistant/ and stirlingpdf/ still have no secrets.env.local of
+# their own -- no auth config exists at the compose level for either
+# (confirmed per-app 2026-09-03; stirlingpdf's OIDC is excluded from this
+# rollout entirely -- see authelia/config/configuration.yml.template's
+# own comment, paid-tier gate). freshrss/, mealie/, actualbudget/ gained
+# theirs 2026-09-06 for OIDC client secrets only, not for their original
+# first-run-wizard/UI-set auth. immich/'s db credentials are generated
+# above too, colocated on this node as of 2026-09-05.
 # --------------------------------------------------------------------------
 
 chmod 600 "${DIR}"/*/secrets.env.local 2>/dev/null || true

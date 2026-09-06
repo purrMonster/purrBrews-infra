@@ -36,6 +36,22 @@ services:
       # "manual, sequenced, can't be a static default" shape as Home
       # Assistant's recorder config on percolator.
       SIGNUPS_ALLOWED: "true"
+      # OIDC login via Authelia, added 2026-09-06 -- SSO_* env vars per
+      # Vaultwarden's own current wiki, NOT independently re-verified
+      # this pass (see authelia/config/configuration.yml.template's own
+      # confidence note) -- confirm the exact var names and the
+      # /sso-connector.html redirect path against
+      # https://www.authelia.com/integration/openid-connect/clients/vaultwarden/
+      # before relying on this. Requires Vaultwarden >=1.35.0 -- check
+      # `docker exec vaultwarden /vaultwarden --version` first, this
+      # image is pinned to :latest so the running version isn't implied
+      # by the compose file alone.
+      SSO_ENABLED: "true"
+      SSO_ONLY: "false"
+      SSO_AUTHORITY: https://authelia.${DOMAIN}
+      SSO_CLIENT_ID: vaultwarden
+      SSO_CLIENT_SECRET: ${VAULTWARDEN_OIDC_CLIENT_SECRET}
+      SSO_SCOPES: "openid profile email offline_access"
     volumes:
       - /srv/data/vaultwarden:/data
     # No ports: mapping as of 2026-09-04 -- was "8000:80" until then.

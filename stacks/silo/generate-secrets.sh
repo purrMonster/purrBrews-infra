@@ -135,6 +135,11 @@ set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_DATABASE_PASSWORD" "$(ra
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_JWT_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_WEBHOOK_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_INIT_ADMIN_PASSWORD" "$(rand 16)"
+# OIDC client secret -- generated on sieve (Authelia's own node), not
+# here. Paste the value sieve's generate-secrets.sh prints in its "OIDC
+# client secrets" summary table, then re-run this script -- see
+# silo/README.md.
+set_if_absent "${DIR}/komodo/secrets.env.local" "KOMODO_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 log "traefik/secrets.env.local"
 # Added 2026-09-04, alongside giving silo's Traefik real TLS via

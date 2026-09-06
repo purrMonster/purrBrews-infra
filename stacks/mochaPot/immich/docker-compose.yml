@@ -31,6 +31,21 @@ services:
       # boot; the GUI is the documented path going forward if this env
       # var is ever removed in a future Immich release.
       IMMICH_MACHINE_LEARNING_URL: http://${ROASTERY_TAILNET_IP}:3003
+    # OIDC login via Authelia -- Immich has NO env var / compose option for
+    # this, added 2026-09-06 as a documented manual step instead:
+    # Administration -> Settings -> OAuth in Immich's own Admin UI, once
+    # logged in as the normal admin account. Fields (from
+    # docs.immich.app/administration/oauth/): Issuer URL
+    # https://authelia.${DOMAIN}, Client ID "immich", Client Secret = the
+    # IMMICH_OIDC_CLIENT_SECRET value recorded in
+    # immich/secrets.env.local (generated on sieve, see
+    # mochaPot/README.md), Scope "openid email profile". Two things to
+    # decide deliberately before enabling, not defaults to leave alone:
+    # "Auto Register" defaults to true (unknown OIDC logins silently
+    # create new Immich accounts) and the Role Claim (immich_role) only
+    # applies at FIRST account creation, never re-synced on later
+    # logins -- changing an Authelia group afterward won't touch an
+    # existing user's role.
     volumes:
       # Local NVMe -- Immich's own docs are explicit that UPLOAD_LOCATION
       # can be NFS but strongly implies fast local storage is preferable

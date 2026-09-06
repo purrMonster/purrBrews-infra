@@ -59,6 +59,26 @@ services:
       - "traefik.http.routers.nextcloud.entrypoints=websecure"
       - "traefik.http.services.nextcloud.loadbalancer.server.port=80"
     restart: unless-stopped
+    # OIDC login via Authelia, added 2026-09-06 -- entirely `occ`
+    # command + app-install driven, no compose/env option exists for
+    # this. After the install wizard completes (see the trusted_proxies
+    # gap noted below), run inside the container:
+    #   docker exec -u www-data nextcloud php occ app:install user_oidc
+    #   docker exec -u www-data nextcloud php occ user_oidc:provider authelia \
+    #     --clientid="nextcloud" \
+    #     --clientsecret="<NEXTCLOUD_OIDC_CLIENT_SECRET from secrets.env.local>" \
+    #     --discoveryuri="https://authelia.${DOMAIN}/.well-known/openid-configuration"
+    # Confirmed 2026-09-06: use client_secret_post as this client's
+    # token_endpoint_auth_method in Authelia's config (already set in
+    # authelia/config/configuration.yml.template) -- the user_oidc app
+    # specifically needs this, NOT the same as the third-party oidc_login
+    # app (which wants client_secret_basic instead -- don't conflate the
+    # two if you ever see both mentioned online).
+    # Test login via https://nextcloud.${DOMAIN}/login?direct=1 (the
+    # plain password-login fallback) BEFORE enabling any auto-redirect
+    # setting in user_oidc's admin panel -- confirms the OIDC flow itself
+    # works while you can still always get back in.
+    #
     # Known gap, STILL not fixed here even though Traefik is now actually
     # routing to this (2026-09-05): `trusted_proxies`/`overwriteprotocol`/
     # `overwritehost` (config.php keys, not env vars) still can't be set

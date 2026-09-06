@@ -18,6 +18,24 @@ services:
       VIKUNJA_DATABASE_PATH: /db/vikunja.db
       VIKUNJA_SERVICE_PUBLICURL: http://${MOCHAPOT_LAN_IP}:3456
       VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SERVICE_SECRET}
+      # OIDC login via Authelia, added 2026-09-06. Env var names below
+      # follow Vikunja's own documented config.yml -> env var mapping
+      # (VIKUNJA_<UPPERCASED_SECTION_PATH>, same pattern already proven
+      # by DATABASE_TYPE/SERVICE_PUBLICURL above) extended to
+      # auth.openid.providers[0] -- NOT independently confirmed as
+      # literal working env vars this pass, since Vikunja's own OIDC doc
+      # page (vikunja.io/docs/openid/) only shows a config.yml example,
+      # not its env-var form. If these don't take effect on first
+      # bring-up, mount a real config.yml instead (auth.openid block from
+      # that doc page) at /app/vikunja/config.yml, same pattern as this
+      # repo's authelia/headscale config files, and drop these env vars.
+      VIKUNJA_AUTH_LOCAL_ENABLED: "true"
+      VIKUNJA_AUTH_OPENID_ENABLED: "true"
+      VIKUNJA_AUTH_OPENID_PROVIDERS_0_NAME: Authelia
+      VIKUNJA_AUTH_OPENID_PROVIDERS_0_AUTHURL: https://authelia.${DOMAIN}
+      VIKUNJA_AUTH_OPENID_PROVIDERS_0_CLIENTID: vikunja
+      VIKUNJA_AUTH_OPENID_PROVIDERS_0_CLIENTSECRET: ${VIKUNJA_OIDC_CLIENT_SECRET}
+      VIKUNJA_AUTH_OPENID_PROVIDERS_0_SCOPE: "openid profile email"
     volumes:
       - /srv/data/vikunja/db:/db
       - /srv/data/vikunja/files:/app/vikunja/files

@@ -54,6 +54,15 @@ services:
     volumes:
       - /srv/data/authelia/data:/config
       - ./config/configuration.yml:/config/configuration.yml:ro
+      # OIDC signing key -- generated once via openssl, NOT rendered
+      # from a .template (see configuration.yml.template's own comment
+      # on why: a PEM's newlines don't survive envsubst + YAML
+      # block-scalar indentation cleanly). Real file lives on the host
+      # at /srv/data/authelia/oidc/private.pem -- see README.md for the
+      # one-time openssl command. Mounted as a directory, not the file
+      # directly, so Authelia can also see any future second key added
+      # for rotation without a compose change.
+      - /srv/data/authelia/oidc:/config/oidc:ro
     restart: unless-stopped
     labels:
       - "traefik.enable=true"

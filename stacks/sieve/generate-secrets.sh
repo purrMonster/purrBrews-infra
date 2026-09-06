@@ -119,6 +119,97 @@ set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_STORAGE_ENCRYPTION_K
 set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_RESET_PASSWORD_JWT_SECRET" "$(rand 32)"
 set_if_absent "${DIR}/authelia/secrets.env.local" "REDIS_PASSWORD" "$(rand 24)"
 
+log "authelia/secrets.env.local -- OIDC clients"
+# Added 2026-09-06. Each app below gets ONE randomly generated plaintext
+# secret (stored here, in authelia/secrets.env.local, alongside its own
+# PBKDF2 hash) -- the hash is what configuration.yml.template actually
+# uses (identity_providers.oidc.clients[].client_secret); the PLAINTEXT
+# is what the app itself needs, on whatever node it actually lives on.
+# Since Authelia and almost none of these apps share a node, this script
+# can't put the plaintext directly into the app's own secrets.env.local
+# the way every other secret in this repo works -- there's no SSH access
+# between nodes, by design (see runbook.md's operating model). Instead,
+# the Summary section at the bottom of this script prints a copy-paste
+# table; run this script, then go copy each value into the named
+# app/secrets.env.local on its own node, then run that node's own
+# generate-secrets.sh again so it picks up the real value in place of its
+# REPLACE_ME_FROM_SIEVE_AUTHELIA placeholder.
+#
+# Hashing needs `docker run authelia/authelia:4.39.20` -- fine here since
+# that image is already pulled for the authelia container itself on this
+# same node. If docker isn't reachable when this runs, the plaintext is
+# still generated and saved; the hash step is skipped with a warning and
+# the exact manual command to run once docker is available.
+hash_oidc_secret() {
+  # hash_oidc_secret <plaintext> -- prints the $pbkdf2-sha512$... digest,
+  # or nothing if the hash couldn't be produced.
+  docker run --rm authelia/authelia:4.39.20 \
+    authelia crypto hash generate pbkdf2 --password "$1" 2>/dev/null \
+    | grep -oE '\$pbkdf2-sha512\$[^[:space:]]+' | head -n1
+}
+
+set_oidc_client() {
+  # set_oidc_client <APP_VAR_PREFIX>
+  # Generates <PREFIX>_OIDC_CLIENT_SECRET (plaintext, if absent) and
+  # <PREFIX>_OIDC_CLIENT_SECRET_HASH (if absent) in
+  # authelia/secrets.env.local. Idempotent, same as every set_if_absent
+  # call elsewhere in this script -- a real value already present is
+  # never touched or re-hashed.
+  local prefix="$1" file="${DIR}/authelia/secrets.env.local"
+  local plain_key="${prefix}_OIDC_CLIENT_SECRET"
+  local hash_key="${prefix}_OIDC_CLIENT_SECRET_HASH"
+
+  local plain
+  plain="$(get_value "$file" "$plain_key")"
+  if [[ -z "$plain" ]]; then
+    plain="$(rand 32)"
+    set_if_absent "$file" "$plain_key" "$plain"
+  fi
+
+  local hash
+  hash="$(get_value "$file" "$hash_key")"
+  if [[ -z "$hash" ]]; then
+    if command -v docker >/dev/null 2>&1; then
+      hash="$(hash_oidc_secret "$plain")"
+    fi
+    if [[ -n "$hash" ]]; then
+      # Single-quoted, written directly (not via set_if_absent, which
+      # doesn't quote) -- this value contains literal $ characters that
+      # bash `source` (render-configs.sh reads this file that way) would
+      # otherwise try to expand as variable references, silently
+      # corrupting the hash into garbage that looks like it worked.
+      printf "%s='%s'\n" "$hash_key" "$hash" >> "$file"
+    else
+      echo "  ! could not hash ${plain_key} -- is docker reachable from this shell?" >&2
+      echo "    Run manually once it is:" >&2
+      echo "      docker run --rm authelia/authelia:4.39.20 authelia crypto hash generate pbkdf2 --password '$plain'" >&2
+      echo "    then add the result as ${hash_key}='<digest>' (single-quoted) to authelia/secrets.env.local" >&2
+    fi
+  fi
+}
+
+set_if_absent "${DIR}/authelia/secrets.env.local" "AUTHELIA_OIDC_HMAC_SECRET" "$(rand 48)"
+set_oidc_client "VIKUNJA"
+set_oidc_client "MEALIE"
+set_oidc_client "IMMICH"
+set_oidc_client "FRESHRSS"
+set_oidc_client "ACTUALBUDGET"
+set_oidc_client "NEXTCLOUD"
+set_oidc_client "PAPERLESS"
+set_oidc_client "HOMEASSISTANT"
+set_oidc_client "VAULTWARDEN"
+set_oidc_client "KOMODO"
+set_oidc_client "HEADSCALE"
+set_oidc_client "JELLYFIN"
+
+log "headscale/secrets.env.local"
+# Headscale is the one OIDC client that lives on THIS node, same as
+# Authelia -- so unlike every other app above, its plaintext secret can
+# go straight into its own secrets.env.local here, no manual copy-paste
+# needed. Read back what set_oidc_client just generated/found above.
+HEADSCALE_OIDC_PLAIN="$(get_value "${DIR}/authelia/secrets.env.local" "HEADSCALE_OIDC_CLIENT_SECRET")"
+set_if_absent "${DIR}/headscale/secrets.env.local" "HEADSCALE_OIDC_CLIENT_SECRET" "$HEADSCALE_OIDC_PLAIN"
+
 log "traefik/secrets.env.local"
 prompt_if_placeholder "${DIR}/traefik/secrets.env.local" "CF_DNS_API_TOKEN" \
   "Cloudflare DNS API token (Edit zone DNS, scoped to your zone)" \
@@ -161,3 +252,36 @@ else
   echo "See stacks/sieve/README.md for where each one comes from. Once"
   echo "they're all set, run ./render-configs.sh before bringing any app up."
 fi
+
+log "OIDC client secrets -- copy these to each app's own node"
+echo "Authelia needs the HASH (already written above); each app needs the"
+echo "PLAINTEXT below instead, in its OWN secrets.env.local, on its OWN"
+echo "node. Headscale is excluded here -- it's on this same node, already"
+echo "handled automatically above."
+echo
+printf '%-14s %-10s %-30s %s\n' "APP" "NODE" "FILE" "KEY=VALUE TO PASTE"
+for entry in \
+  "Vikunja:mochaPot:vikunja" \
+  "Mealie:mochaPot:mealie" \
+  "Immich:mochaPot:immich" \
+  "FreshRSS:mochaPot:freshrss" \
+  "ActualBudget:mochaPot:actualbudget" \
+  "Nextcloud:percolator:nextcloud" \
+  "Paperless:percolator:paperless" \
+  "HomeAssistant:percolator:homeassistant" \
+  "Vaultwarden:cellar:vaultwarden" \
+  "Komodo:silo:komodo" \
+  "Jellyfin:roastery:jellyfin" \
+; do
+  app_name="${entry%%:*}"
+  rest="${entry#*:}"
+  node="${rest%%:*}"
+  appdir="${rest#*:}"
+  prefix="$(echo "$app_name" | tr '[:lower:]' '[:upper:]')"
+  value="$(get_value "${DIR}/authelia/secrets.env.local" "${prefix}_OIDC_CLIENT_SECRET")"
+  printf '%-14s %-10s %-30s %s\n' "$app_name" "$node" "${appdir}/secrets.env.local" "${prefix}_OIDC_CLIENT_SECRET=${value}"
+done
+echo
+echo "After pasting, re-run that node's own generate-secrets.sh -- it'll"
+echo "leave the pasted real value alone (idempotent, same as everything"
+echo "else) and stop flagging it as still-needed."

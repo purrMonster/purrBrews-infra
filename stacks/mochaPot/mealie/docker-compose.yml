@@ -4,6 +4,29 @@ services:
     container_name: mealie
     environment:
       TZ: ${TZ}
+      # OIDC login via Authelia, added 2026-09-06 -- confirmed exact env
+      # vars via docs.mealie.io/documentation/getting-started/
+      # installation/backend-config/. OIDC_SIGNUP_ENABLED lets a first
+      # OIDC login auto-create a Mealie account; leave local login (the
+      # image's own default account) working as a fallback -- don't
+      # delete it.
+      OIDC_AUTH_ENABLED: "true"
+      OIDC_SIGNUP_ENABLED: "true"
+      OIDC_REQUIRES_EMAIL_VERIFICATION: "true"
+      OIDC_CONFIGURATION_URL: https://authelia.${DOMAIN}/.well-known/openid-configuration
+      OIDC_CLIENT_ID: mealie
+      OIDC_CLIENT_SECRET: ${MEALIE_OIDC_CLIENT_SECRET}
+      OIDC_PROVIDER_NAME: Authelia
+      OIDC_SIGNING_ALGORITHM: RS256
+      OIDC_USER_CLAIM: email
+      OIDC_NAME_CLAIM: name
+      OIDC_GROUPS_CLAIM: groups
+      # Uncomment once real lldap group names exist for these -- gates
+      # who can log in / who becomes admin via OIDC, confirmed 2026-09-06
+      # this maps an IdP "groups" claim value, not an Authelia concept of
+      # its own.
+      # OIDC_USER_GROUP: mealie-users
+      # OIDC_ADMIN_GROUP: mealie-admins
     volumes:
       - /srv/data/mealie:/app/data/
     ports:

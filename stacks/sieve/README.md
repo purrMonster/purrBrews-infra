@@ -463,6 +463,84 @@ into `.env.local`'s `SIEVE_DISK_DEVICE_NVME` (controller node
 Same silo-side prerequisite as every other node's copy: port 8080
 republished on silo's `scrutiny` service (done 2026-09-05).
 
+## Authelia as an OpenID Connect Provider — fleet-wide SSO (added 2026-09-06)
+
+Authelia now issues OIDC tokens too, not just ForwardAuth session cookies
+— every app in the fleet that speaks OIDC can log in via Authelia instead
+of (or in addition to) its own local account. See
+`authelia/config/configuration.yml.template`'s own `identity_providers.oidc`
+block for the full per-app client list, exclusions (n8n, Stirling PDF,
+Roundcube — each has a real reason, not an oversight, see that file), and
+per-app caveats. This section is just the one-time foundation setup that
+every one of those clients depends on.
+
+### One-time setup, in order
+
+1. **Generate the JWKS signing key** (RSA, PKCS#8, 4096-bit — comfortably
+   over Authelia's documented >=2048-bit minimum). Run directly on sieve,
+   not from anywhere else — the key never leaves this host:
+   ```sh
+   mkdir -p /srv/data/authelia/oidc
+   openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 \
+     -out /srv/data/authelia/oidc/private.pem
+   chmod 600 /srv/data/authelia/oidc/private.pem
+   ```
+   Never regenerate this once any client is in real use — every
+   already-issued token/signature breaks if the signing key changes.
+2. **Run `./generate-secrets.sh`** — it now also generates
+   `AUTHELIA_OIDC_HMAC_SECRET`, and for every client app a plaintext
+   `<APP>_OIDC_CLIENT_SECRET` plus its PBKDF2 hash
+   (`<APP>_OIDC_CLIENT_SECRET_HASH`, via `docker run
+   authelia/authelia:4.39.20 authelia crypto hash generate pbkdf2`
+   under the hood — needs docker, which sieve already has for Authelia
+   itself). The hash is what `configuration.yml.template` actually uses;
+   the plaintext is what each app needs, and since Authelia shares a node
+   with almost none of them, the script's final "OIDC client secrets"
+   table tells you exactly which value to paste into which
+   `<app>/secrets.env.local` on which OTHER node. Headscale is the one
+   exception (same node as Authelia) — handled automatically, no copying
+   needed.
+3. **Copy each plaintext secret to its own node**, per the table the
+   script printed, then re-run *that node's* `generate-secrets.sh` so it
+   stops flagging the value as still-needed.
+4. **Run `./render-configs.sh`** on sieve, then recreate the `authelia`
+   container (`./compose.sh authelia up -d`, or however you're bringing
+   it up) so it picks up the new `identity_providers.oidc` block and the
+   JWKS key mount.
+5. Configure each app on its own node — some are a straight compose
+   env-var change (already done, just needs the real secret from step 3),
+   others need a manual step this repo can't automate (Nextcloud's
+   `user_oidc` app + `occ` commands, Home Assistant's HACS component,
+   Jellyfin's SSO-Auth plugin). Each app's own `docker-compose.yml` has
+   the exact instructions in a comment right next to its OIDC config (or,
+   for the UI-only apps, right where its other manual steps already are).
+
+### Rollout status by app (2026-09-06)
+
+| App | Node | How it's configured | Status |
+|---|---|---|---|
+| Vikunja | mochaPot | env vars (unconfirmed literal names — see its own compose comment) | needs real secret pasted in |
+| Mealie | mochaPot | env vars (confirmed) | needs real secret pasted in |
+| FreshRSS | mochaPot | env vars (confirmed) | needs real secret + admin-username-match, see its own compose comment |
+| Actual Budget | mochaPot | env vars (confirmed) | needs real secret + a decision on who logs in first (becomes owner) |
+| Immich | mochaPot | Admin UI only, no compose option | needs real secret + manual UI config |
+| Nextcloud | percolator | `occ` commands + app install, no compose option | needs real secret + manual `occ` commands |
+| Paperless-ngx | percolator | env vars (JSON, reconstructed from an earlier research pass — verify before trusting) | needs real secret pasted in |
+| Home Assistant | percolator | HACS custom component (alpha), no compose option | needs real secret + manual HACS install |
+| Vaultwarden | cellar | env vars (unconfirmed literal names — verify against Authelia's own guide) | needs real secret + version check (>=1.35.0) |
+| Komodo | silo | env vars (confirmed) | needs real secret pasted in |
+| Headscale | sieve | config.yaml (confirmed) | handled automatically by step 2/3 above — just needs step 4 |
+| Jellyfin | roastery | plugin UI only, plugin itself is unmaintained | needs real secret + manual plugin install, real caution warranted |
+| n8n | mochaPot | — | **excluded**: SSO is an Enterprise-only feature, not in the free image this fleet runs |
+| Stirling PDF | mochaPot | — | **excluded**: SSO moved behind a paid "Team" tier as of the v1.0.0+ relicense |
+| Roundcube | mochaPot | — | **excluded**: this fleet's mail backend is an external provider (Gmail/Fastmail) that will never accept an Authelia-issued token |
+
+Nothing above is enabled by default just because the compose file has the
+env vars — each app still needs its real secret pasted in (step 3) and,
+for the UI-only ones, the manual config step actually done, before OIDC
+login does anything. Local/password login is left in place everywhere as
+a fallback; this is additive, not a replacement, for every app above.
+
 ## Known gaps / things to double-check before relying on this
 
 - **Image tags are pinned to what was current as of 2026-08-28.** Several
@@ -504,3 +582,14 @@ republished on silo's `scrutiny` service (done 2026-09-05).
   addition, not needed for the current threat model.
 - **CrowdSec's own remote-unban-method backlog item is unrelated to any of
   the above and still open** — see the runbook.
+- **Authelia's OIDC support is confirmed still "open beta"** as of
+  4.39.20 (Authelia's own docs/roadmap say so explicitly, "Beta 8" as of
+  2026-09-06) — a version bump could carry breaking changes to the
+  `identity_providers.oidc` config shape. Pinned deliberately; re-read
+  Authelia's release notes before ever bumping this image tag.
+- **Four apps' OIDC redirect_uris (Nextcloud, Paperless-ngx, Home
+  Assistant, Vaultwarden) were reconstructed from an earlier research
+  pass, not fresh-verified 2026-09-06 the way the other eight were** —
+  see `authelia/config/configuration.yml.template`'s own confidence note.
+  Verify each against Authelia's own published integration guide (where
+  one exists) before the first real login attempt on that app.

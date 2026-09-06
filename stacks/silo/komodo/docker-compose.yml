@@ -83,8 +83,11 @@ services:
       # a Local DNS Record for komodo.${DOMAIN} in sieve's Pi-hole
       # pointing at ${SILO_LAN_IP} (not added yet -- see README). Still
       # just used for OAuth/webhook URL suggestions in the UI, not
-      # security-relevant on its own.
-      KOMODO_HOST: http://komodo.${DOMAIN}
+      # security-relevant on its own. Updated to https 2026-09-06 (was
+      # http) for consistency now that silo's Traefik real-TLS setup is
+      # confirmed live (../traefik/config/traefik.yml.template) and this
+      # value will actually be echoed back into an OIDC redirect_uri.
+      KOMODO_HOST: https://komodo.${DOMAIN}
       KOMODO_TITLE: purrBrews Komodo
       # Lets Periphery connect once it presents this key — Core writes its
       # own public key here on first boot; both containers share the same
@@ -111,6 +114,21 @@ services:
       # leaving open signups on is a bigger blast radius than the
       # official file's generic default assumes.
       KOMODO_DISABLE_USER_REGISTRATION: "true"
+      # OIDC login via Authelia, added 2026-09-06 -- confirmed exact env
+      # vars via Komodo's own core.config.toml. Komodo already sits
+      # behind this same Authelia's ForwardAuth on this node
+      # (../traefik/config/dynamic.yml.template) -- this is complementary
+      # SSO into Komodo's OWN login screen, not a replacement for that
+      # gate. New OIDC users are NOT auto-enabled (Komodo has no
+      # group/role-claim mapping at all -- open feature request
+      # moghtech/komodo#1251) -- an admin must manually enable each one
+      # in Komodo's own UI after their first OIDC login.
+      # KOMODO_LOCAL_AUTH stays "true" above -- local admin login is
+      # unaffected by any of this, deliberately kept as a fallback.
+      KOMODO_OIDC_ENABLED: "true"
+      KOMODO_OIDC_PROVIDER: https://authelia.${DOMAIN}
+      KOMODO_OIDC_CLIENT_ID: komodo
+      KOMODO_OIDC_CLIENT_SECRET: ${KOMODO_OIDC_CLIENT_SECRET}
     volumes:
       - /srv/data/komodo/keys:/config/keys
       - /srv/data/komodo/backups:/backups

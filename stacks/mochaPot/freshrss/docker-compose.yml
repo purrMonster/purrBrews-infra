@@ -4,6 +4,25 @@ services:
     container_name: freshrss
     environment:
       TZ: ${TZ}
+      # OIDC login via Authelia, added 2026-09-06 -- confirmed exact env
+      # vars via freshrss.github.io/FreshRSS/en/admins/16_OpenID-Connect.html.
+      # LOCKOUT RISK, straight from that doc: FreshRSS derives the OIDC
+      # username from OIDC_REMOTE_USER_CLAIM (preferred_username) and has
+      # no admin-recovery flow if that doesn't match an existing admin
+      # account -- create/rename this node's FreshRSS admin user to match
+      # your Authelia preferred_username EXACTLY before relying on this.
+      # Also confirmed: OIDC only works on this image's default Debian
+      # base (not an Alpine variant) -- this compose file already uses
+      # freshrss/freshrss:latest, which is Debian-based, so no change
+      # needed there, just noting the constraint.
+      OIDC_ENABLED: "1"
+      OIDC_PROVIDER_METADATA_URL: https://authelia.${DOMAIN}/.well-known/openid-configuration
+      OIDC_CLIENT_ID: freshrss
+      OIDC_CLIENT_SECRET: ${FRESHRSS_OIDC_CLIENT_SECRET}
+      OIDC_CLIENT_CRYPTO_KEY: ${FRESHRSS_OIDC_CRYPTO_KEY}
+      OIDC_REMOTE_USER_CLAIM: preferred_username
+      OIDC_SCOPES: "openid groups email profile"
+      OIDC_X_FORWARDED_HEADERS: "X-Forwarded-Host X-Forwarded-Port X-Forwarded-Proto"
     volumes:
       - /srv/data/freshrss/data:/var/www/FreshRSS/data
       - /srv/data/freshrss/extensions:/var/www/FreshRSS/extensions

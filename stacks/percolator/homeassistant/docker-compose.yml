@@ -62,6 +62,19 @@ services:
     # a scale/performance upgrade for the recorder specifically, not a
     # hard requirement to get HA running.
     #
+    # OIDC login via Authelia, added 2026-09-06 -- Home Assistant core has
+    # no built-in OIDC support at all; this needs the community
+    # "hass-oidc-auth" HACS custom component (flagged ALPHA-stage by its
+    # own maintainer, confirmed 2026-09-06). Install via HACS ->
+    # Integrations -> custom repository, then configure with Issuer URL
+    # https://authelia.${DOMAIN}, Client ID "homeassistant", Client
+    # Secret = HOMEASSISTANT_OIDC_CLIENT_SECRET from
+    # homeassistant/secrets.env.local (generated on sieve, see
+    # percolator/README.md). Redirect URI is that component's own
+    # convention (not HA core's) -- verify against its README at install
+    # time. Keep Home Assistant's local login working as a real fallback
+    # given the alpha status -- don't remove it.
+    #
     # ANOTHER manual step, needed now that Traefik sits in front of this
     # (2026-09-05): Home Assistant refuses requests from a reverse proxy
     # it doesn't explicitly trust -- confirmed via HA's own reverse-proxy

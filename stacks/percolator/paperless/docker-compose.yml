@@ -34,6 +34,18 @@ services:
       # list -- direct LAN-IP:8000 access was never published as a port
       # anyway, so there's no second origin worth also trusting.
       PAPERLESS_URL: https://paperless.${DOMAIN}
+      # OIDC login via Authelia, added 2026-09-06 -- paperless-ngx builds
+      # on django-allauth; PAPERLESS_APPS enables its generic
+      # openid_connect provider, PAPERLESS_SOCIALACCOUNT_PROVIDERS
+      # configures it. This exact JSON shape is carried over from an
+      # earlier research pass (not re-verified against paperless-ngx's
+      # live docs this session) -- double-check field names in
+      # paperless-ngx's own current configuration docs (search "OIDC" at
+      # docs.paperless-ngx.com) before first bring-up, especially if this
+      # version of paperless-ngx is newer than 3.0.5.
+      PAPERLESS_APPS: allauth.socialaccount.providers.openid_connect
+      PAPERLESS_SOCIALACCOUNT_PROVIDERS: >-
+        {"openid_connect":{"APPS":[{"provider_id":"authelia","name":"Authelia","client_id":"paperless","secret":"${PAPERLESS_OIDC_CLIENT_SECRET}","settings":{"server_url":"https://authelia.${DOMAIN}/.well-known/openid-configuration"}}]}}
     volumes:
       - /srv/data/paperless/data:/usr/src/paperless/data
       - /srv/data/paperless/media:/usr/src/paperless/media

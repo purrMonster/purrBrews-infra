@@ -33,6 +33,349 @@ authentication_backend:
     user: 'uid=admin,ou=people,dc=purrbrews,dc=internal'
     password: '${AUTHELIA_LDAP_PASSWORD}'
 
+# --- OpenID Connect 1.0 Provider -----------------------------------------
+# Added 2026-09-06: Authelia as the fleet's single sign-on provider for
+# every app that speaks OIDC. Authelia's own OIDC support is confirmed
+# still "open beta" as of 4.39.20 (Authelia's own docs/roadmap say so
+# explicitly -- "Beta 8" as of this research) -- pin this image version
+# deliberately (see docker-compose.yml, already pinned) rather than
+# floating, since a beta feature can carry breaking changes across
+# releases.
+#
+# authorization_policy is 'one_factor' on every client below, matching
+# access_control's own current policy (see the comment at the top of
+# this file: "one_factor everywhere, no TOTP enrollment required yet").
+# Setting a client to 'two_factor' before anyone has TOTP enrolled would
+# make that app's OIDC login permanently fail for everyone -- flip these
+# to 'two_factor' only after TOTP is confirmed working fleet-wide, same
+# trigger access_control's own note calls out.
+#
+# Deliberately EXCLUDED from this rollout, not overlooked:
+#   - n8n: SSO/OIDC is a Business/Enterprise-license-only feature per
+#     n8n's own docs (docs.n8n.io/deploy/host-n8n/configure-n8n/security/
+#     configure-sso) -- not available in the free n8nio/n8n Community
+#     image this fleet runs. An unofficial nginx+oauth2-proxy workaround
+#     exists (kb.jarylchng.com/i/n8n-and-authelia-bypass-n8n-native-
+#     login-page-usin-sNRmS-7j5u1/) but hasn't been decided on.
+#   - Stirling PDF: confirmed 2026-09-06 that OAuth2/OIDC SSO moved
+#     behind Stirling's paid "Team" tier ($99/mo) as of the v1.0.0+
+#     open-core relicense -- Authelia's own published Stirling-PDF guide
+#     is stale on this point (tested against pre-relicense v0.42.0).
+#     Revisit only if/when a Team license is purchased.
+#   - Roundcube: this fleet has no mail server of its own (roundcube's
+#     docker-compose.yml points at a real external IMAP/SMTP provider --
+#     Gmail, Fastmail, whichever the mailbox is actually on). Roundcube's
+#     OAuth2 support is "delegated" auth -- the same OIDC token used for
+#     the webapp login is also handed to the IMAP/SMTP backend via
+#     XOAUTH2, which only works if that backend trusts tokens from the
+#     same IdP. Gmail/Fastmail's IMAP will never accept an Authelia-
+#     issued token, so enabling this would only replace Roundcube's login
+#     screen while breaking actual mail fetching -- not worth it unless
+#     this fleet ever runs its own mail server.
+#
+# Client secrets below are PBKDF2 hashes (authelia crypto hash generate
+# pbkdf2) -- generated and stored by generate-secrets.sh's "OIDC clients"
+# section. See README.md for the one-time JWKS-key + hmac_secret setup
+# this whole block depends on, and for which apps still need a manual
+# follow-up step (Nextcloud, Home Assistant, Jellyfin) beyond this file.
+#
+# CONFIDENCE NOTE, read before trusting a redirect_uris entry below:
+# Vikunja/Mealie/Immich/FreshRSS/Actual Budget/Komodo/Headscale/Jellyfin
+# were freshly re-researched 2026-09-06 straight from each app's own
+# current docs/GitHub -- high confidence. Nextcloud/Paperless/Home
+# Assistant/Vaultwarden's *redirect_uris* below are reconstructed from an
+# earlier research pass whose literal confirmed paths didn't survive into
+# this file verbatim -- their client_secret/PKCE/scopes/auth-method
+# fields are still trusted from that pass, but double-check each of
+# those four's exact callback PATH against Authelia's own published guide
+# (authelia.com/integration/openid-connect/clients/<app>/, where one
+# exists) before the first real login attempt.
+identity_providers:
+  oidc:
+    hmac_secret: '${AUTHELIA_OIDC_HMAC_SECRET}'
+    # File-based, not embedded inline -- a PEM's own newlines don't
+    # survive envsubst + YAML block-scalar indentation cleanly, and a
+    # file is exactly how Authelia's own docs show it done. Generate once
+    # per README.md's instructions; never regenerate after clients exist
+    # elsewhere, or every already-issued token/signature breaks.
+    jwks:
+      - key_path: '/config/oidc/private.pem'
+    clients:
+      - client_id: 'vikunja'
+        client_name: 'Vikunja'
+        client_secret: '${VIKUNJA_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: false
+        redirect_uris:
+          - 'https://vikunja.${DOMAIN}/auth/openid/authelia'
+        scopes: ['openid', 'profile', 'email']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # No PKCE support exists at all (open feature request
+        # go-vikunja/vikunja#1501) -- require_pkce: false is the only
+        # option that works, not a lesser choice.
+        # SEPARATE, higher-stakes flag: versions <=2.2.2 had a real 2FA
+        # bypass via OIDC login when EmailFallback matched an existing
+        # local account (GHSA-8jvc-mcx6-r4cg, fixed in 2.3.0). Pinned tag
+        # is 2.6.0 as of 2026-09-06 (fine) -- re-check on any downgrade.
+
+      - client_id: 'mealie'
+        client_name: 'Mealie'
+        client_secret: '${MEALIE_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://mealie.${DOMAIN}/login'
+        scopes: ['openid', 'email', 'profile', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+
+      - client_id: 'immich'
+        client_name: 'Immich'
+        client_secret: '${IMMICH_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://immich.${DOMAIN}/auth/login'
+          - 'https://immich.${DOMAIN}/user-settings'
+          - 'app.immich:///oauth-callback'
+        scopes: ['openid', 'profile', 'email']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        id_token_signed_response_alg: 'RS256'
+        userinfo_signed_response_alg: 'RS256'
+        # Immich's own current docs use client_secret_post; Authelia's
+        # published Immich guide (an older/simpler example) uses
+        # client_secret_basic instead -- genuinely conflicting primary
+        # sources as of 2026-09-06. Going with Immich's own doc since
+        # Immich (the relying party) decides what it actually sends -- if
+        # login fails with invalid_client, try client_secret_basic (and
+        # drop both _signed_response_alg lines to 'none', matching
+        # Authelia's example) before assuming anything else is wrong.
+        token_endpoint_auth_method: 'client_secret_post'
+
+      - client_id: 'freshrss'
+        client_name: 'FreshRSS'
+        client_secret: '${FRESHRSS_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: false
+        redirect_uris:
+          # FreshRSS "seems to always include the port in the requested
+          # redirect_uri" per Authelia's own FreshRSS guide -- registering
+          # the :443 form explicitly avoids a mismatch on the default
+          # HTTPS port.
+          - 'https://freshrss.${DOMAIN}:443/i/oidc/'
+        scopes: ['openid', 'groups', 'email', 'profile']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # Lockout risk, straight from FreshRSS's own docs: "using a
+        # random username instead of your actual OIDC identity as the
+        # default user may result in no administrator access to your
+        # instance." Make FreshRSS's local admin username match
+        # OIDC_REMOTE_USER_CLAIM (preferred_username) exactly BEFORE
+        # relying on OIDC login -- see mochaPot/README.md.
+
+      - client_id: 'actual-budget'
+        client_name: 'Actual Budget'
+        client_secret: '${ACTUALBUDGET_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: false
+        redirect_uris:
+          - 'https://actualbudget.${DOMAIN}/openid/callback'
+        scopes: ['openid', 'profile', 'groups', 'email']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # Lockout/ownership risk, straight from Actual's own docs: the
+        # FIRST user to complete OIDC login automatically becomes the
+        # server owner, permanently, with no UI way to change it later.
+        # Decide who that should be BEFORE flipping this on.
+
+      - client_id: 'nextcloud'
+        client_name: 'Nextcloud'
+        client_secret: '${NEXTCLOUD_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # user_oidc app's callback -- verify against Authelia's own
+          # Nextcloud guide before first use, see confidence note above.
+          - 'https://nextcloud.${DOMAIN}/apps/user_oidc/code'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        # user_oidc app specifically (NOT the third-party oidc_login app,
+        # which instead wants client_secret_basic -- don't conflate the
+        # two, confirmed different auth methods per-app in research).
+        token_endpoint_auth_method: 'client_secret_post'
+        # Manual setup required beyond this block -- Nextcloud's OIDC
+        # login is entirely `occ` + app-install driven, not compose/env
+        # configurable. See percolator/README.md for the exact commands.
+        # Test with ?direct=1 to reach the password-login form as a
+        # fallback BEFORE enabling any auto-redirect setting.
+
+      - client_id: 'paperless'
+        client_name: 'Paperless-ngx'
+        client_secret: '${PAPERLESS_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # django-allauth's standard openid_connect provider callback
+          # shape -- verify against Authelia's own Paperless-ngx guide
+          # (if one exists) before first use, see confidence note above.
+          - 'https://paperless.${DOMAIN}/accounts/oidc/authelia/login/callback/'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+
+      - client_id: 'homeassistant'
+        client_name: 'Home Assistant'
+        client_secret: '${HOMEASSISTANT_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # hass-oidc-auth's own convention, not HA core's -- re-verify
+          # against that component's README at install time, it has no
+          # Authelia-published guide.
+          - 'https://homeassistant.${DOMAIN}/auth/hass-oidc-auth/callback'
+        scopes: ['openid', 'profile', 'email', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_post'
+        # Requires the hass-oidc-auth HACS custom component, flagged
+        # alpha-stage by its own maintainer -- keep Home Assistant's
+        # local login enabled as a real fallback, not a formality.
+
+      - client_id: 'vaultwarden'
+        client_name: 'Vaultwarden'
+        client_secret: '${VAULTWARDEN_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # Best-known Vaultwarden SSO callback path -- NOT independently
+          # re-verified this pass (see confidence note above). Confirm
+          # against authelia.com/integration/openid-connect/clients/vaultwarden/
+          # before enabling SSO_ENABLED.
+          - 'https://vault.${DOMAIN}/sso-connector.html'
+        scopes: ['openid', 'profile', 'email', 'groups', 'offline_access']
+        response_types: ['code']
+        grant_types: ['authorization_code', 'refresh_token']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # Vaultwarden's SSO feature needs >=1.35.0 -- this fleet pins
+        # vaultwarden/server:latest (cellar/vaultwarden/docker-compose.yml)
+        # -- confirm the actual running version before enabling
+        # SSO_ENABLED, don't assume :latest is new enough.
+
+      - client_id: 'komodo'
+        client_name: 'Komodo'
+        client_secret: '${KOMODO_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://komodo.${DOMAIN}/auth/oidc/callback'
+        scopes: ['openid', 'profile', 'email']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # Komodo already sits behind this same Authelia's ForwardAuth on
+        # silo (silo/traefik/config/dynamic.yml.template) -- this OIDC
+        # client is complementary, not redundant: once ForwardAuth's
+        # session cookie exists, this lets Komodo's own login complete
+        # via SSO too instead of a second, separate Komodo password.
+        # New OIDC logins are NOT auto-enabled (Komodo has no group/role
+        # mapping at all -- open feature request moghtech/komodo#1251) --
+        # an admin must manually enable each new user in Komodo's own UI
+        # after their first OIDC login. Local login stays available via
+        # KOMODO_LOCAL_AUTH, unaffected by any of this.
+
+      - client_id: 'headscale'
+        client_name: 'Headscale'
+        client_secret: '${HEADSCALE_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          - 'https://headscale.${DOMAIN}/oidc/callback'
+        scopes: ['openid', 'email', 'profile', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_basic'
+        # This authenticates NODE ENROLLMENT ("tailscale up" login), not
+        # a web admin UI -- headscale has none of its own. Only affects
+        # future enrollments; nodes already joined via pre-auth key are
+        # untouched. If a community admin UI (Headplane, etc.) is ever
+        # added, it needs its OWN separate client/redirect_uri -- don't
+        # assume this one covers it.
+
+      - client_id: 'jellyfin'
+        client_name: 'Jellyfin'
+        client_secret: '${JELLYFIN_OIDC_CLIENT_SECRET_HASH}'
+        public: false
+        authorization_policy: 'one_factor'
+        require_pkce: true
+        pkce_challenge_method: 'S256'
+        redirect_uris:
+          # roastery's Jellyfin has no DOMAIN/HTTPS front end at all (LAN-
+          # only, plain http://<roastery LAN IP>:8096 -- see
+          # roastery/README.md). Replace with the real reachable address
+          # before use; this placeholder will not work as-is.
+          - 'http://ROASTERY_LAN_IP_PLACEHOLDER:8096/sso/OID/redirect/authelia'
+        scopes: ['openid', 'profile', 'groups']
+        response_types: ['code']
+        grant_types: ['authorization_code']
+        access_token_signed_response_alg: 'none'
+        userinfo_signed_response_alg: 'none'
+        token_endpoint_auth_method: 'client_secret_post'
+        # Requires the community "SSO-Auth" plugin (9p4/jellyfin-plugin-sso)
+        # -- ARCHIVED by its own author 2026-05-12, no maintained fork
+        # named anywhere. Adopting this means adopting an unmaintained
+        # plugin; keep Jellyfin's local login working as a real fallback,
+        # not a formality. Known bug: its Pushed Authorization Request
+        # handling can loop against Authelia -- disable "Pushed
+        # Authorization Requests" and enable "HTTPS Scheme Override" in
+        # the plugin's own settings if login loops. See roastery/README.md.
+
 # Authelia's reset-password email/link flow signs its tokens with this
 # secret — required as soon as reset_password isn't explicitly disabled
 # (it isn't here, filesystem notifier still writes the link to a file),

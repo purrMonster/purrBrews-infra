@@ -43,6 +43,16 @@ set_if_absent() {
 # immich-ml — no secrets needed (see header comment above). Nothing to
 # call set_if_absent for.
 
+log "jellyfin/secrets.env.local"
+# OIDC client secret -- generated on sieve (Authelia's own node), not
+# here. Paste the value sieve's generate-secrets.sh prints in its "OIDC
+# client secrets" summary table, then re-run this script. Jellyfin's own
+# OIDC config is entirely plugin-UI-driven (SSO-Auth, see
+# jellyfin/docker-compose.yml's own comment and README.md) -- kept here
+# purely so the real value is recorded locally for that UI, same as
+# Immich's on mochaPot.
+set_if_absent "${DIR}/jellyfin/secrets.env.local" "JELLYFIN_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
+
 # --- Future apps go here ------------------------------------------------
 # One set_if_absent call per secret value, added as each new app gets
 # built here — same pattern as every other node's generate-secrets.sh:

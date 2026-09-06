@@ -106,6 +106,13 @@ log "homeassistant/secrets.env.local"
 set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_USERNAME" "homeassistant"
 set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_PASSWORD" "$(rand 32)"
 set_if_absent "${DIR}/homeassistant/secrets.env.local" "HA_DB_DATABASE_NAME" "homeassistant"
+# OIDC client secret -- generated on sieve (Authelia's own node), not
+# here. Paste the value sieve's generate-secrets.sh prints in its "OIDC
+# client secrets" summary table, then re-run this script. Kept here even
+# though Home Assistant's OIDC config itself is HACS-component/UI-driven
+# (no compose env var reads this) -- same "record it locally" reasoning
+# as Immich's on mochaPot -- see percolator/README.md.
+set_if_absent "${DIR}/homeassistant/secrets.env.local" "HOMEASSISTANT_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 # valkey/ has no secrets.env.local of its own -- no auth configured (see
 # that compose file's own comment: same-host-only trust, never exposed
@@ -116,6 +123,11 @@ set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_ADMIN_PASSWORD" "$
 set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_USERNAME" "nextcloud"
 set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_PASSWORD" "$(rand 32)"
 set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_DB_DATABASE_NAME" "nextcloud"
+# OIDC client secret -- generated on sieve, same handoff as above.
+# Nextcloud's user_oidc app takes this via `occ user_oidc:provider`, not
+# an env var -- kept here so the real value is recorded locally for that
+# command. See percolator/README.md.
+set_if_absent "${DIR}/nextcloud/secrets.env.local" "NEXTCLOUD_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 log "paperless/secrets.env.local"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_ADMIN_PASSWORD" "$(rand 16)"
@@ -123,6 +135,10 @@ set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_SECRET_KEY" "$(ran
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_USERNAME" "paperless"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_PASSWORD" "$(rand 32)"
 set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_DB_DATABASE_NAME" "paperless"
+# OIDC client secret -- generated on sieve, same handoff as above. This
+# one IS read directly by paperless/docker-compose.yml's
+# PAPERLESS_SOCIALACCOUNT_PROVIDERS env var.
+set_if_absent "${DIR}/paperless/secrets.env.local" "PAPERLESS_OIDC_CLIENT_SECRET" "REPLACE_ME_FROM_SIEVE_AUTHELIA"
 
 log "traefik/secrets.env.local"
 # Added 2026-09-04, alongside pre-emptively giving percolator's Traefik
