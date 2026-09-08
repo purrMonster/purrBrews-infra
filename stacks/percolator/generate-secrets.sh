@@ -12,12 +12,20 @@
 # re-explained here to avoid drifting out of sync across five copies of
 # the same header.
 #
-# THIS FILE HAS NO APPS YET. percolator's own app list isn't built out — see
-# stacks/percolator/README.md and the initiation doc for what's actually
-# planned. Add one set_if_absent (or prompt_if_placeholder) call per
-# secret as each app gets built, same pattern as
-# stacks/silo/generate-secrets.sh's own per-app section — copy the helper
-# functions below as-is, they're generic.
+# Covers homeassistant, nextcloud, paperless, traefik, and
+# komodo-periphery (filled in 2026-09-04/05 as each app was built — see
+# stacks/percolator/README.md for what each app does). Add one
+# set_if_absent (or prompt_if_placeholder) call per secret as any further
+# app gets built here, same pattern as the per-app section below — copy
+# the helper functions below as-is, they're generic.
+#
+# STALE-HEADER NOTE (fixed 2026-09-07): this comment used to read "THIS
+# FILE HAS NO APPS YET" from percolator's initial scaffold on 2026-09-02.
+# That stopped being true on 2026-09-04/05 when the apps below were added
+# but nobody updated this header -- caught during the pre-reinit repass.
+# Flagging the pattern here as a reminder to keep header comments in sync
+# with what a file actually contains, since this is a five-node copy-paste
+# script and the same drift could recur on any of the others.
 #
 # Usage: run directly on percolator itself (never on roastery — per Section
 # 19.6, "no live coding on fleet nodes" is about not editing code/configs

@@ -314,9 +314,14 @@ silo's `scrutiny` service (done 2026-09-05).
   prompted (restructured 2026-09-05 to live in each app's own
   `secrets.env.local` rather than a shared `postgres/` one — see
   `### postgres` above).
-- `local.env.example` — copy to `.env.local` and fill in. Minimal for now
-  (`PERCOLATOR_LAN_IP`, `TZ`, `DOMAIN`) — grows as apps are added, same
-  as silo's did.
+- `local.env.example` — copy to `.env.local` and fill in. Grew from the
+  original minimal scaffold (`PERCOLATOR_LAN_IP`, `TZ`, `DOMAIN`) as apps
+  were added, same as silo's did — as of 2026-09-05 it also needs
+  `SILO_LAN_IP` (Komodo Periphery), `SIEVE_LAN_IP` (Traefik ForwardAuth),
+  and `PERCOLATOR_DISK_DEVICE_SSD`/`PERCOLATOR_DISK_DEVICE_NVME`
+  (scrutiny-collector) — see the file itself for the full current list,
+  this line was stale (still described the 2026-09-01 scaffold) as of the
+  2026-09-07 pre-reinit repass.
 - `.gitignore` — same rules as sieve's/silo's: `.env.local`,
   `*/secrets.env.local`, and rendered `*/config/*` (except the tracked
   `.template` sources) are never committed.

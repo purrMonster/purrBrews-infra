@@ -36,9 +36,16 @@ apps below.
   second run).
 - `local.env.example` — copy to `.env.local` and fill in. Has grown past
   the original minimal stub as apps were added: `MOCHAPOT_LAN_IP`, `TZ`,
-  `MOCHAPOT_RENDER_GID` (Jellyfin's Quick Sync group), `DOMAIN`.
+  `MOCHAPOT_RENDER_GID` (Jellyfin's Quick Sync group), `DOMAIN`,
+  `SILO_LAN_IP` (Komodo Periphery), `MOCHAPOT_DISK_DEVICE_NVME`
+  (scrutiny-collector), `ROASTERY_TAILNET_IP` (Immich's ML worker
+  endpoint), and `SIEVE_LAN_IP` (Traefik ForwardAuth — added alongside
+  Traefik on 2026-09-06 but missing from this file until the 2026-09-07
+  pre-reinit repass caught it; see the runbook's 2026-09-07 entry).
   (`PERCOLATOR_LAN_IP` was here for Immich's cross-host DB/Redis; removed
   2026-09-05 once Immich's database layer moved onto this node itself.)
+  See the file itself for the authoritative current list rather than
+  trusting this summary — it has drifted before.
 - `.gitignore` — same rules as every other node: `.env.local`,
   `*/secrets.env.local`, and rendered `*/config/*` (except tracked
   `.template` sources) are never committed.

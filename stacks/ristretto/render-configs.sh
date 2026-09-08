@@ -14,7 +14,7 @@
 # overwrites the rendered file. Never hand-edit a rendered file directly;
 # edit the .template.
 #
-set -euo pipefail
+set -uo pipefail   # deliberately no -e -- see the note above the render loop below
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -27,12 +27,36 @@ set -a
 [[ -f "${DIR}/.env.local" ]] && source "${DIR}/.env.local"
 set +a
 
-find "$DIR" -name '*.template' | while read -r tpl; do
+FAILED=()
+
+while IFS= read -r tpl; do
   out="${tpl%.template}"
   app_dir="$(dirname "$(dirname "$tpl")")"
+  rel="${out#"$DIR"/}"
+
   if [[ -f "${app_dir}/secrets.env.local" ]]; then
-    set -a; source "${app_dir}/secrets.env.local"; set +a
+    set -a
+    if ! source "${app_dir}/secrets.env.local" 2>/dev/null; then
+      set +a
+      echo "FAILED: ${rel} -- couldn't source ${app_dir#"$DIR"/}/secrets.env.local (permission denied or syntax error -- check \`ls -la\` and \`bash -n\` on that file)" >&2
+      FAILED+=("$rel")
+      continue
+    fi
+    set +a
   fi
-  envsubst < "$tpl" > "$out"
-  echo "Rendered: ${out#"$DIR"/}"
-done
+
+  if envsubst < "$tpl" > "$out" 2>/dev/null; then
+    echo "Rendered: ${rel}"
+  else
+    echo "FAILED: ${rel} -- envsubst failed" >&2
+    FAILED+=("$rel")
+  fi
+done < <(find "$DIR" -name '*.template')
+
+if [[ ${#FAILED[@]} -gt 0 ]]; then
+  echo >&2
+  echo "render-configs.sh: ${#FAILED[@]} of the templates above FAILED to render:" >&2
+  for f in "${FAILED[@]}"; do echo "  - $f" >&2; done
+  echo "Everything else rendered fine (see 'Rendered:' lines above) -- fix the failure(s) above and re-run; already-rendered files are untouched by a re-run that fixes only the broken one(s)." >&2
+  exit 1
+fi

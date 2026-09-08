@@ -284,7 +284,7 @@ step_apt_base() {
     ca-certificates curl gnupg lsb-release \
     git age sudo vim htop tmux net-tools \
     unattended-upgrades apt-listchanges \
-    ufw cron gettext-base
+    ufw cron gettext-base jq
 
   # Unattended security updates — covers the "updates" half of base hardening.
   if [[ ! -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then

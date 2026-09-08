@@ -143,7 +143,18 @@ log "authelia/secrets.env.local -- OIDC clients"
 hash_oidc_secret() {
   # hash_oidc_secret <plaintext> -- prints the $pbkdf2-sha512$... digest,
   # or nothing if the hash couldn't be produced.
-  docker run --rm authelia/authelia:4.39.20 \
+  #
+  # Uses `sudo docker run` for this one line only -- barista is
+  # deliberately NOT in the docker group, so a plain `docker run` here
+  # can't reach the daemon socket. Do NOT work around that by running
+  # this whole script with sudo -- that was the original root cause of
+  # the Mealie OIDC outage: it left every file this script touches
+  # (including unrelated apps' secrets.env.local) root-owned, which
+  # then made a later plain-user render-configs.sh run hit "Permission
+  # denied" and silently abort partway through. Scoping sudo to just
+  # this docker invocation keeps the rest of the script running as the
+  # normal user.
+  sudo docker run --rm authelia/authelia:4.39.20 \
     authelia crypto hash generate pbkdf2 --password "$1" 2>/dev/null \
     | grep -oE '\$pbkdf2-sha512\$[^[:space:]]+' | head -n1
 }
@@ -182,7 +193,7 @@ set_oidc_client() {
     else
       echo "  ! could not hash ${plain_key} -- is docker reachable from this shell?" >&2
       echo "    Run manually once it is:" >&2
-      echo "      docker run --rm authelia/authelia:4.39.20 authelia crypto hash generate pbkdf2 --password '$plain'" >&2
+      echo "      sudo docker run --rm authelia/authelia:4.39.20 authelia crypto hash generate pbkdf2 --password '$plain'" >&2
       echo "    then add the result as ${hash_key}='<digest>' (single-quoted) to authelia/secrets.env.local" >&2
     fi
   fi
