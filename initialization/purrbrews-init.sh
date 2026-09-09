@@ -578,26 +578,22 @@ step_firewall() {
   ufw default deny incoming
   ufw default allow outgoing
   ufw allow OpenSSH
+  ufw --force enable
 
-  # ufw-docker: without this, Docker's own iptables rules for published
-  # ports (-p/"ports:" in a compose file) bypass UFW entirely -- Docker
-  # writes to the DOCKER-USER/FORWARD chains ahead of UFW's INPUT chain, so
-  # a published container port is reachable regardless of what UFW says.
-  # This patches /etc/ufw/after.rules to hook UFW into that chain instead,
-  # flipping the default to "Docker-published ports are blocked unless
-  # explicitly allowed" via `ufw-docker allow <container> <port>` (or a
-  # manual `ufw route allow ... to <container-ip> port <port>` to scope it
-  # to a subnet instead of the whole internet -- see runbook.md's UFW/Docker
-  # entry). Re-applied every run because `ufw --force reset` above wipes any
-  # previous after.rules patch.
+  # ufw-docker's own install check requires UFW to already be enabled --
+  # running it before `ufw --force enable` above hits this same
+  # "mismatched iptables legacy/nf_tables" error regardless of iptables
+  # backend, because that's ufw-docker's generic message for "UFW isn't
+  # active yet," not necessarily a real nf_tables problem. Confirmed
+  # against a real ufw-docker/omakub GitHub issue with this exact text.
   if ! command -v ufw-docker &>/dev/null; then
     curl -fsSL -o /usr/local/bin/ufw-docker \
       https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
     chmod +x /usr/local/bin/ufw-docker
   fi
   ufw-docker install
+  ufw reload
 
-  ufw --force enable
   ufw status verbose
   log "ufw-docker installed -- Docker-published ports are now blocked by"
   log "default. Run 'sudo ufw-docker allow <container> <port>' per app once"
