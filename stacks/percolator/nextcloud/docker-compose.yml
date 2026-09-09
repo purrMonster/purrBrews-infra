@@ -117,6 +117,9 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - percolator_net
+      - default
 
 networks:
   # Only still needed here for nextcloud (the app) to reach ../valkey's
