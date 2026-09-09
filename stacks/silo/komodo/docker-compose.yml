@@ -113,7 +113,7 @@ services:
       # Periphery's docker.sock mount) to every node in the fleet;
       # leaving open signups on is a bigger blast radius than the
       # official file's generic default assumes.
-      KOMODO_DISABLE_USER_REGISTRATION: "true"
+      KOMODO_DISABLE_USER_REGISTRATION: "false"
       # OIDC login via Authelia, added 2026-09-06 -- confirmed exact env
       # vars via Komodo's own core.config.toml. Komodo already sits
       # behind this same Authelia's ForwardAuth on this node
