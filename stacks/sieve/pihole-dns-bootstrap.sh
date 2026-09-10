@@ -24,20 +24,12 @@
 # '[...]'`. See pihole/docker-compose.yml's comment and the 2026-08-30
 # runbook entry for the full story.
 #
-# Each subdomain gets an AAAA override too (added 2026-08-30, cloudflared
-# bring-up), not just A — `address=/domain/ip` only intercepts A queries;
-# an IPv6 (AAAA) query for the same name still gets forwarded upstream and
-# answered for real if that name has actual public DNS (which
-# headscale.${DOMAIN} now does, once routed through cloudflared). A LAN
-# client then sees a mix of our local A answer and Cloudflare's real AAAA
-# answer, and most OSes/browsers prefer IPv6 when offered — so it was
-# connecting straight to Cloudflare's public edge instead of sieve, causing
-# ERR_QUIC_PROTOCOL_ERROR and then ERR_ECH_FALLBACK_CERTIFICATE_INVALID
-# once QUIC was disabled. Fixed by also setting `address=/domain/::` for
-# every subdomain (not just headscale) — `::` is unroutable, so any client
-# preferring it fails fast and falls back to the real IPv4 address. Applied
-# to all subdomains defensively, not just the one that's public today, so
-# this doesn't need rediscovering the next time another one goes public.
+# Global IPv6-AAAA filtering was added 2026-08-30 (headscale/cloudflared
+# bring-up) and corrected 2026-09-10 after the original per-host
+# `address=/domain/::` approach turned out to cause real misdirected
+# connections rather than the intended fail-fast fallback -- see the
+# comment right above FILTER_AAAA_LINE below for the full story and the
+# actual mechanism in use now.
 #
 # Idempotent — safe to re-run. Only appends entries that are actually
 # missing; never removes or reorders anything already in dnsmasq_lines (so
@@ -174,6 +166,7 @@ echo "  Currently set: ${#CURRENT_LINES[@]} line(s)"
 # rather than overwriting the array wholesale.
 declare -a MERGED=("${CURRENT_LINES[@]}")
 declare -a MISSING=()
+
 # Global IPv6 filter -- replaces the old per-host `address=/host/::` hack
 # (removed 2026-09-10, see runbook). That approach relied on `::` being
 # "unroutable so clients fail over to IPv4", but Linux's connect() treats
@@ -216,7 +209,7 @@ for entry in "${HOST_TARGETS[@]}"; do
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
-  log "All $((${#HOST_TARGETS[@]} + 1) split-horizon entries (A + AAAA-block per hostname) already present — nothing to do."
+  log "All $(( ${#HOST_TARGETS[@]} + 1 )) entries (one A record per hostname, plus the global filter-AAAA line) already present — nothing to do."
   exit 0
 fi
 
@@ -240,4 +233,4 @@ log "Restarting pihole so dnsmasq picks up the new config"
 ${DOCKER_CMD} restart pihole >/dev/null \
   || fail "Config was set but the container restart failed — restart it by hand: ${DOCKER_CMD} restart pihole"
 
-log "Done — verify with: nslookup pihole.${DOMAIN}"
+log "Done — verify with: dig +short pihole.${DOMAIN}"
