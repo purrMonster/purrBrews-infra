@@ -174,20 +174,45 @@ echo "  Currently set: ${#CURRENT_LINES[@]} line(s)"
 # rather than overwriting the array wholesale.
 declare -a MERGED=("${CURRENT_LINES[@]}")
 declare -a MISSING=()
+# Global IPv6 filter -- replaces the old per-host `address=/host/::` hack
+# (removed 2026-09-10, see runbook). That approach relied on `::` being
+# "unroutable so clients fail over to IPv4", but Linux's connect() treats
+# the unspecified address :: as a request for loopback (a long-standing
+# kernel quirk) -- so an IPv6-preferring client didn't fail over at all,
+# it silently connected to itself. On sieve that meant hitting sieve's own
+# local Traefik instead of the intended target (self-signed cert, wrong
+# backend); the same misdirection risk applies to any client whose
+# resolver doesn't filter out the bogus AAAA answer before using it.
+# `filter-AAAA` is dnsmasq's real, documented fix for this: it strips AAAA
+# records from every answer this Pi-hole serves, fleet-wide, so clients
+# never even see an IPv6 candidate to race against -- including the real
+# public AAAA Cloudflare serves for headscale.${DOMAIN}, which is the
+# actual problem this whole mechanism exists to solve. Global rather than
+# per-host because dnsmasq has no per-domain equivalent, and nothing on
+# this LAN does real IPv6 client traffic anyway -- zero blast radius.
+FILTER_AAAA_LINE="filter-AAAA"
+found=0
+for existing in "${CURRENT_LINES[@]}"; do
+  [[ "$existing" == "$FILTER_AAAA_LINE" ]] && { found=1; break; }
+done
+if [[ "$found" -eq 0 ]]; then
+  MISSING+=("$FILTER_AAAA_LINE")
+  MERGED+=("$FILTER_AAAA_LINE")
+fi
+
 for entry in "${HOST_TARGETS[@]}"; do
   sub="${entry%%:*}"
   ip_var="${entry#*:}"
   ip="${!ip_var}"
-  for desired in "address=/${sub}.${DOMAIN}/${ip}" "address=/${sub}.${DOMAIN}/::"; do
-    found=0
-    for existing in "${CURRENT_LINES[@]}"; do
-      [[ "$existing" == "$desired" ]] && { found=1; break; }
-    done
-    if [[ "$found" -eq 0 ]]; then
-      MISSING+=("$desired")
-      MERGED+=("$desired")
-    fi
+  desired="address=/${sub}.${DOMAIN}/${ip}"
+  found=0
+  for existing in "${CURRENT_LINES[@]}"; do
+    [[ "$existing" == "$desired" ]] && { found=1; break; }
   done
+  if [[ "$found" -eq 0 ]]; then
+    MISSING+=("$desired")
+    MERGED+=("$desired")
+  fi
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
