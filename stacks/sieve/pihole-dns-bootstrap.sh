@@ -216,7 +216,7 @@ for entry in "${HOST_TARGETS[@]}"; do
 done
 
 if [[ "${#MISSING[@]}" -eq 0 ]]; then
-  log "All $((${#HOST_TARGETS[@]} * 2)) split-horizon entries (A + AAAA-block per hostname) already present — nothing to do."
+  log "All $((${#HOST_TARGETS[@]} + 1) split-horizon entries (A + AAAA-block per hostname) already present — nothing to do."
   exit 0
 fi
 
