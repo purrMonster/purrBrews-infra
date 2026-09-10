@@ -11,8 +11,8 @@
 # step_lid_switch() (see the note there).
 # Covers WBS 18.1 (Pre-deployment): base hardening (SSH keys, updates,
 # static IP, lid-switch), Docker + Compose, PROJECT_DIR/DATA_DIR/MEDIA_DIR +
-# root .env, cloning the purrbrews-infra repo (see "Remote repo URL
-# sources" below), and the age keypair (sieve only, once).
+# root .env, and cloning the purrbrews-infra repo (see "Remote repo URL
+# sources" below).
 #
 # Usage:
 #   sudo ./purrbrews-init.sh <sieve|silo|cellar|percolator|mochaPot> [--yes]
@@ -45,9 +45,9 @@ set -euo pipefail
 # Known fleet IPs (extend as more nodes get assigned addresses)
 declare -A NODE_IP=(
   [sieve]=192.168.0.10
-  [percolator]=192.168.0.11
+  [percolator]=192.168.0.13
   [silo]=192.168.0.12
-  [cellar]=192.168.0.13
+  [cellar]=192.168.0.11
   [mochaPot]=192.168.0.14
 )
 # Nodes this script provisions (base OS layer per WBS 18.1). All five —
@@ -117,19 +117,8 @@ MEDIA_DIR="/srv/media"
 # empty $PROJECT_DIR and a warning telling you exactly what to set.
 REMOTE_URL_FILE="${PURRBREWS_REMOTE_URL_FILE:-${SCRIPT_DIR}/remote_url.txt}"
 
-# The node that owns the one-and-only age keypair generation step (first in
-# deploy order — sieve → silo → cellar → percolator → mochaPot → ristretto).
-#
-# Deliberately OUTSIDE $PROJECT_DIR: this is unexposed data (a private key),
-# and PROJECT_DIR is a git working tree. Keeping it out of that tree entirely
-# means it can never be swept up by a plain `git add .`, regardless of what
-# .gitignore says at the time. Only secrets/*.sops.yaml (ciphertext) belongs
-# inside the repo — see 19.3.
-AGE_KEY_HOME_NODE="sieve"
-AGE_KEY_DIR="/etc/purrbrews/age"
-AGE_KEY_FILE="${AGE_KEY_DIR}/keys.txt"
-
-# Set to "false" to skip the baseline UFW firewall step entirely.
+# Set to "false" to skip the baseline UFW firewall step entirely (this also
+# skips the ufw-docker install below, since it lives in the same step).
 ENABLE_UFW="true"
 
 # Morning `git pull --ff-only` cron (step_cron_pull, scripts/purrbrews-pull.sh)
@@ -282,9 +271,16 @@ step_apt_base() {
 
   apt-get -y install \
     ca-certificates curl gnupg lsb-release \
-    git age sudo vim htop tmux net-tools \
+    git sudo vim htop tmux net-tools \
+    network-manager \
     unattended-upgrades apt-listchanges \
     ufw cron gettext-base jq
+
+  # Fresh installs put this on NetworkManager already, but installing +
+  # enabling it here too makes that an explicit guarantee this script makes
+  # rather than an assumption it quietly depends on — step_static_ip below
+  # requires nmcli and will refuse to fall back to anything else.
+  systemctl enable --now NetworkManager
 
   # Unattended security updates — covers the "updates" half of base hardening.
   if [[ ! -f /etc/apt/apt.conf.d/20auto-upgrades ]]; then
@@ -359,7 +355,27 @@ step_ssh_hardening() {
 }
 
 step_static_ip() {
-  log "Static IP configuration"
+  log "Static IP configuration (NetworkManager)"
+
+  # Forced, not just preferred: fresh installs on this fleet's hardware
+  # come up on NetworkManager, and this script no longer carries an
+  # ifupdown code path to fall back to. If nmcli isn't there or isn't
+  # active, that's a real problem worth stopping for, not silently
+  # papering over with a different network stack.
+  command -v nmcli &>/dev/null \
+    || die "nmcli not found — this script requires NetworkManager. Install/enable it and re-run."
+  systemctl is-active --quiet NetworkManager \
+    || die "NetworkManager is installed but not active (systemctl is-active NetworkManager) — enable it and re-run."
+
+  # Some Debian images still ship ifupdown's 'networking' unit enabled
+  # alongside NetworkManager. Two managers fighting over the same interface
+  # produces exactly the kind of flaky, hard-to-debug network state you
+  # don't want on a headless box — NetworkManager owns this fleet's network
+  # config now, so disable ifupdown's unit if it's present and enabled.
+  if systemctl is-enabled networking &>/dev/null; then
+    log "Disabling ifupdown's 'networking' service in favor of NetworkManager."
+    systemctl disable --now networking || true
+  fi
 
   local iface
   iface="$(detect_iface)"
@@ -376,45 +392,21 @@ step_static_ip() {
     return
   fi
 
-  warn "This rewrites $iface's config to a static IP. If you're connected over SSH and the"
+  warn "This rewrites $iface's NetworkManager connection to a static IP. If you're connected over SSH and the"
   warn "network doesn't come back up cleanly, you'll need physical/console access to fix it."
   if ! confirm "Apply static IP $target_ip/$SUBNET_CIDR on $iface now?"; then
-    warn "Skipped static IP configuration — re-run this script (or edit $iface's config by hand) when ready."
+    warn "Skipped static IP configuration — re-run this script (or configure it by hand with nmcli) when ready."
     return
   fi
 
-  if [[ -d /etc/network ]] && systemctl is-enabled networking &>/dev/null; then
-    # Traditional ifupdown (Debian's default outside minimal cloud images)
-    local ifcfg="/etc/network/interfaces.d/${iface}.cfg"
-    mkdir -p /etc/network/interfaces.d
-    if ! grep -q '^source /etc/network/interfaces\.d/\*' /etc/network/interfaces 2>/dev/null; then
-      echo 'source /etc/network/interfaces.d/*' >> /etc/network/interfaces
-    fi
-    cat > "$ifcfg" <<EOF
-auto ${iface}
-iface ${iface} inet static
-    address ${target_ip}/${SUBNET_CIDR}
-    gateway ${GATEWAY}
-    dns-nameservers ${BOOTSTRAP_DNS}
-EOF
-    log "Wrote $ifcfg — applying (this may briefly drop your SSH session)."
-    ifdown "$iface" 2>/dev/null || true
-    ifup "$iface" || systemctl restart networking
-
-  elif command -v nmcli &>/dev/null && systemctl is-active NetworkManager &>/dev/null; then
-    # NetworkManager fallback, in case this image ended up using it instead
-    local con
-    con="$(nmcli -t -f NAME,DEVICE con show | awk -F: -v d="$iface" '$2==d{print $1; exit}')"
-    [[ -n "$con" ]] || con="$iface"
-    nmcli con mod "$con" ipv4.addresses "${target_ip}/${SUBNET_CIDR}" \
-                          ipv4.gateway "$GATEWAY" \
-                          ipv4.dns "$BOOTSTRAP_DNS" \
-                          ipv4.method manual
-    nmcli con up "$con"
-
-  else
-    die "Neither ifupdown nor NetworkManager detected as the active network manager — configure $iface manually with IP $target_ip/$SUBNET_CIDR, gateway $GATEWAY, DNS $BOOTSTRAP_DNS."
-  fi
+  local con
+  con="$(nmcli -t -f NAME,DEVICE con show | awk -F: -v d="$iface" '$2==d{print $1; exit}')"
+  [[ -n "$con" ]] || con="$iface"
+  nmcli con mod "$con" ipv4.addresses "${target_ip}/${SUBNET_CIDR}" \
+                        ipv4.gateway "$GATEWAY" \
+                        ipv4.dns "$BOOTSTRAP_DNS" \
+                        ipv4.method manual
+  nmcli con up "$con"
 
   log "Static IP applied. Reconnect to $target_ip if this session drops."
 }
@@ -577,50 +569,6 @@ step_cron_pull() {
   log "clone of a private repo will fail every run until that's set up."
 }
 
-step_age_key() {
-  log "age keypair (SOPS secrets encryption)"
-
-  if [[ -f "$AGE_KEY_FILE" ]]; then
-    log "age key already present at $AGE_KEY_FILE — leaving it alone."
-    return
-  fi
-
-  if [[ "$NODE" != "$AGE_KEY_HOME_NODE" ]]; then
-    warn "No age private key found on $NODE, and this isn't $AGE_KEY_HOME_NODE (where it's generated)."
-    warn "Copy it over securely once it exists, e.g.:"
-    warn "    scp ${AGE_KEY_HOME_NODE}:${AGE_KEY_FILE} root@${NODE}:${AGE_KEY_FILE}"
-    warn "SOPS-encrypted secrets in the repo can't be decrypted on this node until you do."
-    return
-  fi
-
-  if ! confirm "Generate the fleet's ONE age keypair on $NODE now? (do this exactly once)"; then
-    warn "Skipped. Nothing decrypts/encrypts secrets until this key exists somewhere."
-    return
-  fi
-
-  install -d -m 700 -o "$OPS_USER" -g "$OPS_USER" "$AGE_KEY_DIR"
-  age-keygen -o "$AGE_KEY_FILE"
-  chown "$OPS_USER:$OPS_USER" "$AGE_KEY_FILE"
-  chmod 600 "$AGE_KEY_FILE"
-
-  local pubkey
-  pubkey="$(grep 'public key:' "$AGE_KEY_FILE" | awk '{print $NF}')"
-
-  warn "=============================================================================="
-  warn " AGE KEYPAIR GENERATED — THIS IS THE ONLY COPY RIGHT NOW."
-  warn " Private key: $AGE_KEY_FILE"
-  warn " Public key:  $pubkey"
-  warn ""
-  warn " Do these two things before deploying anything else (Section 19.3):"
-  warn "   1. Back up $AGE_KEY_FILE OFFLINE (printed copy or a USB kept safely)."
-  warn "      This offline copy is the real disaster-recovery copy, not this disk."
-  warn "   2. Copy $AGE_KEY_FILE to silo and cellar (scp over SSH is fine) so they"
-  warn "      can decrypt secrets too. Use the public key above in .sops.yaml."
-  warn " Once Vaultwarden is live on cellar, stash a convenience copy there too —"
-  warn " the offline copy remains authoritative."
-  warn "=============================================================================="
-}
-
 step_firewall() {
   [[ "$ENABLE_UFW" == "true" ]] || { log "UFW step disabled — skipping."; return; }
 
@@ -631,7 +579,25 @@ step_firewall() {
   ufw default allow outgoing
   ufw allow OpenSSH
   ufw --force enable
+
+  # ufw-docker's own install check requires UFW to already be enabled --
+  # running it before `ufw --force enable` above hits this same
+  # "mismatched iptables legacy/nf_tables" error regardless of iptables
+  # backend, because that's ufw-docker's generic message for "UFW isn't
+  # active yet," not necessarily a real nf_tables problem. Confirmed
+  # against a real ufw-docker/omakub GitHub issue with this exact text.
+  if ! command -v ufw-docker &>/dev/null; then
+    curl -fsSL -o /usr/local/bin/ufw-docker \
+      https://github.com/chaifeng/ufw-docker/raw/master/ufw-docker
+    chmod +x /usr/local/bin/ufw-docker
+  fi
+  ufw-docker install
+  ufw reload
+
   ufw status verbose
+  log "ufw-docker installed -- Docker-published ports are now blocked by"
+  log "default. Run 'sudo ufw-docker allow <container> <port>' per app once"
+  log "it's up (see runbook.md's UFW/Docker entry for LAN-scoping it)."
 }
 
 step_summary() {
@@ -681,6 +647,5 @@ step_docker
 step_git_repo
 step_directories
 step_cron_pull
-step_age_key
 step_firewall
 step_summary

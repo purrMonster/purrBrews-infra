@@ -21,6 +21,10 @@ services:
       # own admin docs. Kept PERCOLATOR_LAN_IP too so direct-IP access
       # (bypassing Traefik entirely) still works if ever needed.
       NEXTCLOUD_TRUSTED_DOMAINS: ${PERCOLATOR_LAN_IP} nextcloud.${DOMAIN}
+      TRUSTED_PROXIES: 172.18.0.0/16
+      OVERWRITEPROTOCOL: https
+      OVERWRITEHOST: nextcloud.${DOMAIN}
+      OVERWRITECLIURL: https://nextcloud.${DOMAIN}
       # Confirmed exact names 2026-09-03 via Nextcloud's own DockerHub docs
       # -- discrete vars, not a URL.
       POSTGRES_HOST: postgres-nextcloud
@@ -117,6 +121,9 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    networks:
+      - percolator_net
+      - default
 
 networks:
   # Only still needed here for nextcloud (the app) to reach ../valkey's
