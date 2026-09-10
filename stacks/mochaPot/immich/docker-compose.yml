@@ -30,7 +30,23 @@ services:
       # as a working default so ML isn't silently unconfigured on first
       # boot; the GUI is the documented path going forward if this env
       # var is ever removed in a future Immich release.
-      IMMICH_MACHINE_LEARNING_URL: http://${ROASTERY_TAILNET_IP}:3003
+      #
+      # ROASTERY_LAN_IP, not a tailnet address -- changed 2026-09-10 (see
+      # runbook). The original plan bound roastery's immich-ml to a
+      # Headscale tailnet address specifically, since Immich's own docs
+      # say that container "has no security measures whatsoever" and
+      # needed something restricting who can reach it. That reasoning
+      # was sound but the mechanism didn't fit roastery: it runs Docker
+      # Desktop for Windows, whose real engine lives in its own hidden VM
+      # outside roastery's WSL2 distro entirely, so no Linux-side
+      # firewall inside that distro (UFW or otherwise) has any effect on
+      # a Docker-Desktop-published port. Access is restricted instead at
+      # the layer that actually governs it -- a Windows Defender Firewall
+      # rule on roastery scoped to mochaPot's own LAN IP only (see
+      # stacks/roastery/README.md's "immich-ml firewall" section). Same
+      # protection (only mochaPot can reach it), no Headscale enrollment
+      # needed for either node.
+      IMMICH_MACHINE_LEARNING_URL: http://${ROASTERY_LAN_IP}:3003
     # OIDC login via Authelia -- Immich has NO env var / compose option for
     # this, added 2026-09-06 as a documented manual step instead:
     # Administration -> Settings -> OAuth in Immich's own Admin UI, once
@@ -62,18 +78,18 @@ services:
       valkey:
         condition: service_healthy
     restart: unless-stopped
-    # Updated 2026-09-05: roastery's ML worker now exists --
-    # stacks/roastery/immich-ml/docker-compose.yml, built the same day.
-    # ROASTERY_TAILNET_IP is now a real key in local.env.example (was a
-    # dangling comment-only reference before this fix -- caught while
-    # wiring this up for real). Still requires two things to happen
-    # before this URL actually resolves to anything: (1) roastery gets
-    # enrolled in the fleet's Headscale tailnet (a manual step only
-    # doable on roastery itself -- see its own README), and (2) this
-    # node's .env.local gets the real ROASTERY_TAILNET_IP value filled
-    # in. Until both are done, Immich runs fine without ML -- inference
-    # is simply unconfigured (not a broken fallback, just off) until this
-    # resolves to a real, reachable address.
+    # Updated 2026-09-10: roastery's ML worker exists --
+    # stacks/roastery/immich-ml/docker-compose.yml. ROASTERY_LAN_IP needs
+    # to be a real key in this node's .env.local, set to roastery's
+    # actual LAN IP (not a tailnet address -- see the env var comment
+    # above for why that plan changed). Two things need to be true before
+    # this URL actually resolves to anything: (1) roastery's
+    # immich-machine-learning container is up and its Windows Firewall
+    # rule scoped to this node's LAN IP is in place, and (2) this node's
+    # .env.local has the real ROASTERY_LAN_IP value filled in. Until both
+    # are done, Immich runs fine without ML -- inference is simply
+    # unconfigured (not a broken fallback, just off) until this resolves
+    # to a real, reachable address.
 
   postgres-immich:
     # Moved here from percolator, 2026-09-05 -- see the runbook's

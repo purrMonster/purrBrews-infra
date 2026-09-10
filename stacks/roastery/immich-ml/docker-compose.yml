@@ -1,175 +1,91 @@
 services:
-  immich-server:
-    # Current stable per Immich's GitHub releases, confirmed 2026-09-03.
-    image: ghcr.io/immich-app/immich-server:v3.0.2
-    container_name: immich-server
+  immich-machine-learning:
+    # -cuda variant for NVIDIA GPU acceleration -- confirmed 2026-09-05
+    # against docs.immich.app/features/ml-hardware-acceleration/. Compute
+    # capability requirement (>=5.2) and driver/CUDA requirement
+    # (driver >=545, CUDA >=12.3) both comfortably met by roastery's RTX
+    # 3080 per initiation.txt -- verify the actual installed driver
+    # version on roastery itself before first bring-up (`nvidia-smi`),
+    # don't just trust the hardware spec.
+    #
+    # Same image family/tag scheme as mochaPot's immich-server
+    # (ghcr.io/immich-app/immich-server:v3.0.2) -- pin this to the exact
+    # same v3.0.2 release, not `:release-cuda`, so server and ML worker
+    # versions never drift apart. Tag confirmed 2026-09-10 against
+    # Immich's own docker/docker-compose.yml, which documents exactly
+    # this `${IMMICH_VERSION:-release}-cuda` pattern (worked example
+    # given there: v1.106.4 -> v1.106.4-cuda) -- v3.0.2-cuda follows the
+    # same real, supported convention.
+    image: ghcr.io/immich-app/immich-machine-learning:v3.0.2-cuda
+    container_name: immich_machine_learning
     environment:
       TZ: ${TZ}
-      # Colocated with its own Postgres+Valkey in THIS SAME FILE as of
-      # 2026-09-05 -- moved off percolator, see the runbook's 2026-09-05
-      # entry for the full reasoning. Container-name DNS now, not a
-      # cross-host LAN IP -- Immich's own "pre-existing postgres" docs
-      # confirm the discrete DB_HOSTNAME/etc vars work identically
-      # whether pointed at a local container or a remote host.
-      DB_HOSTNAME: postgres-immich
-      DB_PORT: "5432"
-      DB_USERNAME: ${IMMICH_DB_USERNAME}
-      DB_PASSWORD: ${IMMICH_DB_PASSWORD}
-      DB_DATABASE_NAME: ${IMMICH_DB_DATABASE_NAME}
-      REDIS_HOSTNAME: valkey
-      REDIS_PORT: "6379"
-      # No REDIS_DBINDEX needed anymore -- when this shared percolator's
-      # valkey instance it needed DB 0 to avoid colliding with paperless/
-      # nextcloud's own indexes. Now dedicated to Immich alone (see valkey
-      # below), so the image's own default index is fine unnamespaced.
-      #
-      # Confirmed 2026-09-03: this env var works but is officially
-      # deprecated -- a maintainer states in GitHub Discussion #20686 that
-      # ML worker config should go through Admin Settings -> Machine
-      # Learning Settings -> URL in the web GUI instead. Set here anyway
-      # as a working default so ML isn't silently unconfigured on first
-      # boot; the GUI is the documented path going forward if this env
-      # var is ever removed in a future Immich release.
-      #
-      # ROASTERY_LAN_IP, not a tailnet address -- changed 2026-09-10 (see
-      # runbook). The original plan bound roastery's immich-ml to a
-      # Headscale tailnet address specifically, since Immich's own docs
-      # say that container "has no security measures whatsoever" and
-      # needed something restricting who can reach it. That reasoning
-      # was sound but the mechanism didn't fit roastery: it runs Docker
-      # Desktop for Windows, whose real engine lives in its own hidden VM
-      # outside roastery's WSL2 distro entirely, so no Linux-side
-      # firewall inside that distro (UFW or otherwise) has any effect on
-      # a Docker-Desktop-published port. Access is restricted instead at
-      # the layer that actually governs it -- a Windows Defender Firewall
-      # rule on roastery scoped to mochaPot's own LAN IP only (see
-      # stacks/roastery/README.md's "immich-ml firewall" section). Same
-      # protection (only mochaPot can reach it), no Headscale enrollment
-      # needed for either node.
-      IMMICH_MACHINE_LEARNING_URL: http://${ROASTERY_LAN_IP}:3003
-    # OIDC login via Authelia -- Immich has NO env var / compose option for
-    # this, added 2026-09-06 as a documented manual step instead:
-    # Administration -> Settings -> OAuth in Immich's own Admin UI, once
-    # logged in as the normal admin account. Fields (from
-    # docs.immich.app/administration/oauth/): Issuer URL
-    # https://authelia.${DOMAIN}, Client ID "immich", Client Secret = the
-    # IMMICH_OIDC_CLIENT_SECRET value recorded in
-    # immich/secrets.env.local (generated on sieve, see
-    # mochaPot/README.md), Scope "openid email profile". Two things to
-    # decide deliberately before enabling, not defaults to leave alone:
-    # "Auto Register" defaults to true (unknown OIDC logins silently
-    # create new Immich accounts) and the Role Claim (immich_role) only
-    # applies at FIRST account creation, never re-synced on later
-    # logins -- changing an Authelia group afterward won't touch an
-    # existing user's role.
     volumes:
-      # Local NVMe -- Immich's own docs are explicit that UPLOAD_LOCATION
-      # can be NFS but strongly implies fast local storage is preferable
-      # for the active library; cellar's NFS archive share (once it
-      # exists) is a better fit for cold/older originals via a future
-      # storage-migration job, not the primary upload location from day
-      # one.
-      - /srv/data/immich:/data
+      # Model cache -- relative bind mount into this app's own directory,
+      # not a Docker-managed named volume. No $DATA_DIR-style convention
+      # exists for roastery (every other node's is Section 19.4's
+      # $DATA_DIR/<appname> bind-mount pattern on Linux fleet nodes;
+      # roastery is the first-ever app built on a Windows/WSL2 host, and
+      # a relative path is simplest here rather than inventing a new
+      # global convention for one app). Revisit if a second roastery app
+      # also needs a persistent bind mount and a real pattern emerges.
+      - ./model-cache:/cache
     ports:
-      - "2283:2283"
-    depends_on:
-      postgres-immich:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
+      # Plain hostport mapping, not bound to a specific interface --
+      # access control moved to the Windows Firewall layer instead
+      # (changed 2026-09-10, see runbook). The original plan bound this
+      # to a Headscale tailnet address specifically, reasoning that
+      # Immich's own docs say this container "has no security measures
+      # whatsoever" (no auth, no API key) and needed *something*
+      # restricting who can reach it. That reasoning was sound, but the
+      # mechanism was wrong for this host: roastery runs Docker Desktop
+      # for Windows, whose actual engine lives in its own hidden VM
+      # outside this repo's WSL2 distro entirely (confirmed via `docker
+      # info` showing `Operating System: Docker Desktop`) -- so neither
+      # UFW nor any other Linux-side firewall inside that distro has any
+      # effect on traffic to a Docker-Desktop-published port at all, and
+      # bothering with the tailnet-bind trick (which DOES work, since
+      # Docker's own port-binding operates independently of the OS
+      # firewall) would have meant enrolling both roastery AND mochaPot
+      # into Headscale just for this one internal-only port -- real
+      # ongoing complexity neither node otherwise needs, since both are
+      # stationary LAN boxes with no other reason to be tailnet members.
+      #
+      # Instead, access is restricted at the layer that actually governs
+      # inbound traffic to a Docker-Desktop-published port: Windows
+      # Defender Firewall itself, which Docker Desktop's port publishing
+      # does traverse (unlike the WSL2 distro's own netfilter). A scoped
+      # inbound rule allows only mochaPot's LAN IP to reach this port --
+      # see stacks/roastery/README.md's "immich-ml firewall" section for
+      # the exact New-NetFirewallRule command. Same security posture as
+      # the tailnet approach (only mochaPot can reach it), far less
+      # moving parts.
+      - "3003:3003"
+    # GPU reservation -- standard Compose syntax (docs.docker.com/compose/
+    # gpu-support/), confirmed 2026-09-05 to work under plain `docker
+    # compose up` (not just Swarm). No GPU toggle exists in Docker
+    # Desktop's settings (corrected 2026-09-05 -- this comment originally
+    # claimed one did; checked docs.docker.com/desktop/features/gpu/
+    # after the user looked and found nothing). It's automatic once: WSL2
+    # backend is enabled, a current NVIDIA driver supporting WSL2 GPU
+    # Paravirtualization is installed on Windows itself, and WSL2's
+    # kernel is up to date (`wsl --update`). See README.md's "Bringing
+    # immich-ml up" section for the actual verification command -- none
+    # of this is something this file can configure.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     restart: unless-stopped
-    # Updated 2026-09-10: roastery's ML worker exists --
-    # stacks/roastery/immich-ml/docker-compose.yml. ROASTERY_LAN_IP needs
-    # to be a real key in this node's .env.local, set to roastery's
-    # actual LAN IP (not a tailnet address -- see the env var comment
-    # above for why that plan changed). Two things need to be true before
-    # this URL actually resolves to anything: (1) roastery's
-    # immich-machine-learning container is up and its Windows Firewall
-    # rule scoped to this node's LAN IP is in place, and (2) this node's
-    # .env.local has the real ROASTERY_LAN_IP value filled in. Until both
-    # are done, Immich runs fine without ML -- inference is simply
-    # unconfigured (not a broken fallback, just off) until this resolves
-    # to a real, reachable address.
-
-  postgres-immich:
-    # Moved here from percolator, 2026-09-05 -- see the runbook's
-    # 2026-09-05 entry for the full reasoning. Two things drove this,
-    # not one:
-    #  1. percolator's shared 4-instance postgres/docker-compose.yml
-    #     caused a real port collision between unrelated apps' databases
-    #     (this one and postgres-homeassistant both wanted host port
-    #     5432) -- the fleet-wide fix was giving every app its own
-    #     dedicated db layer, colocated in its own folder.
-    #  2. This was ALSO the one database needing cross-host LAN exposure
-    #     at all, because its server (immich-server, above) lives on a
-    #     different physical host from wherever the database lived.
-    #     Moving the database to sit next to its own server eliminates
-    #     that exposure entirely -- deliberate tradeoff, chosen over
-    #     continuing to publish a database port across the LAN: easier to
-    #     grow mochaPot's own storage than to keep managing that exposure.
-    #
-    # NOT generic pgvector/pgvector -- Immich ships and requires its own
-    # maintained image. Confirmed 2026-09-03 against immich-app/immich's
-    # current main-branch docker/docker-compose.yml AND its "pre-existing
-    # postgres" docs (docs.immich.app/administration/postgres-standalone):
-    # pgvecto.rs support was dropped in Immich v3.0 -- it needs VectorChord
-    # specifically now, not plain pgvector. Generic pgvector/pgvector would
-    # look like it works, then fail on Immich's own migrations.
-    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
-    container_name: postgres-immich
-    environment:
-      POSTGRES_USER: ${IMMICH_DB_USERNAME}
-      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
-      POSTGRES_DB: ${IMMICH_DB_DATABASE_NAME}
-      # From Immich's own current compose, verbatim -- not invented here.
-      POSTGRES_INITDB_ARGS: '--data-checksums'
-    volumes:
-      - /srv/data/postgres-immich:/var/lib/postgresql/data
-    # Immich's own docs are explicit: DB storage must be local disk, never
-    # a network share (NFS/SMB) -- mochaPot's own NVMe, same rule as it
-    # was on percolator.
-    shm_size: 128mb
-    # No ports:/networks: block -- fully private to this compose
-    # file/project, reached by immich-server over the default project
-    # network by container name. Nothing outside this file, including
-    # anything on percolator, can reach this database anymore -- the
-    # entire point of moving it here.
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${IMMICH_DB_USERNAME} -d ${IMMICH_DB_DATABASE_NAME}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
-    # Known gap, not fixed here (2026-09-03, still true 2026-09-05): a
-    # community vuln scan flagged ~90 CVEs in this image's OS layer
-    # (immich-app/immich discussion #23211); the Immich maintainer called
-    # most of it scanner noise on unused packages and declined to change
-    # base images. Real risk is low given this container is never exposed
-    # past this compose file's own default network, but worth knowing.
-
-  valkey:
-    # Dedicated to Immich alone as of 2026-09-05 -- moved off percolator's
-    # shared instance (see runbook's 2026-09-05 entry and
-    # stacks/percolator/valkey/docker-compose.yml's own comment). Immich
-    # was the one consumer that needed percolator's valkey published to
-    # the LAN at all; giving it its own local instance here removes that
-    # exposure completely, same reasoning as postgres-immich above.
-    #
-    # Valkey, not Redis -- confirmed 2026-09-03: Redis's 2024 license
-    # change moved it off OSI-approved open source. Immich's own current
-    # official compose already uses valkey/valkey:9 -- not a guess.
-    image: valkey/valkey:9
-    container_name: valkey
-    # No ports:/networks: block, no password configured -- same reasoning
-    # as postgres-immich above: fully private to this file, immich-server
-    # reaches it by container name on the default project network. No
-    # volume -- cache/queue only, ephemeral is correct, matches Immich's
-    # own official compose (no volume on its redis service either).
-    healthcheck:
-      # From Immich's own official compose, verbatim -- some images'
-      # healthchecks assume a differently-named binary, don't improvise.
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
+    # Known gap, not resolved here (2026-09-05): job concurrency. Immich's
+    # own docs don't expose a compose-level/env-var concurrency knob for
+    # the ML worker (confirmed via search) -- it's configured from
+    # immich-server's Admin UI (Administration -> Settings -> Machine
+    # Learning Settings -> Job Settings) instead, once immich-server can
+    # actually reach this container. initiation.txt's Risk R10 calls for
+    # "capped job concurrency" so gaming performance isn't affected --
+    # set that in the Admin UI after first bring-up, it can't be
+    # pre-configured in this file.
