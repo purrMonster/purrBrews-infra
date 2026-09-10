@@ -41,6 +41,20 @@ derp:
   auto_update_enabled: true
   update_frequency: 24h
 
+# split (added 2026-09-10): forwards any query for ${DOMAIN} itself (the
+# fleet's real hostnames -- komodo.${DOMAIN}, homepage.${DOMAIN}, etc.) to
+# Pi-hole specifically, instead of the global resolvers below. Without
+# this, a device that's on the tailnet but NOT on the LAN (a phone on
+# cellular, reached this way for the first time 2026-09-10) has network
+# *reach* to every fleet service over the mesh/subnet-route, but no way to
+# resolve their hostnames -- it'd have to use raw LAN IPs forever. Pi-hole
+# runs in network_mode: host on sieve (same structural exception as Home
+# Assistant on percolator), so its real address for another container to
+# reach is sieve's own host LAN IP, not a Docker-network hostname --
+# hence ${SIEVE_LAN_IP} here rather than a container name. Don't confuse
+# this with base_domain below -- that's headscale's own separate MagicDNS
+# suffix for tailnet peer names (sieve.ts.${DOMAIN}), not the fleet's real
+# app hostnames this split targets.
 dns:
   magic_dns: true
   base_domain: ts.${DOMAIN}
@@ -48,6 +62,9 @@ dns:
     global:
       - 1.1.1.1
       - 1.0.0.1
+    split:
+      "${DOMAIN}":
+        - ${SIEVE_LAN_IP}
 
 # OIDC -- authenticates NODE ENROLLMENT ("tailscale up" login) against
 # Authelia, added 2026-09-06. This is NOT a web admin UI login (headscale
