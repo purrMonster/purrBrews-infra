@@ -19,7 +19,7 @@ services:
       - NET_ADMIN
     environment:
       TZ: ${TZ:-Asia/Kolkata}
-      DNSMASQ_LISTENING: all
+      FTLCONF_dns_listeningMode: "ALL"
       # Web UI moved off 80/443 (2026-08-29) — those ports are Traefik's
       # alone now. Traefik reverse-proxies pihole.${DOMAIN} to this port
       # instead (see traefik/config/dynamic.yml.template). DNS (port 53)
