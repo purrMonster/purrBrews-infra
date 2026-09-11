@@ -9,6 +9,23 @@
 ## traffic, which means it isn't on sieve_proxy and Traefik's docker-label
 ## discovery can't see it, same reasoning as the dashboard.
 
+# force-http1 (added 2026-09-10): Traefik only recognizes the literal
+# `Upgrade: websocket` header value for its connection-upgrade passthrough
+# (confirmed via traefik/traefik#12609) -- headscale's TS2021 control
+# protocol sends `Upgrade: tailscale-control-protocol` instead, which
+# Traefik doesn't special-case, so it silently negotiates HTTP/2 with the
+# client via ALPN and the upgrade semantics never reach headscale (logged
+# there as "No Upgrade header in TS2021 request"). Forcing ALPN to
+# http/1.1 for headscale's router specifically avoids the downgrade.
+# Referenced from headscale/docker-compose.yml's router label via the
+# @file suffix -- TLS options can't be set via Docker labels themselves,
+# only referenced from there (Traefik docs are explicit on this).
+tls:
+  options:
+    force-http1:
+      alpnProtocols:
+        - "http/1.1"
+
 http:
   routers:
     traefik-dashboard:

@@ -2677,3 +2677,146 @@ Everything else checked this pass came back clean: `headscale-bootstrap.sh`/`pih
 ## 2026-09-08 — roastery reformatted before the above got pushed; recovered via a fresh session
 
 The repass above was finished and tested on 2026-09-07, but never committed/pushed before roastery — which was always slated to be reformatted this week as its own separate track (see this file's fleet-rebuild entries) — actually got reformatted. That took the working tree with the unpushed changes, and severed the Claude desktop app's device-bridge link to this task (the app no longer recognized the reformatted machine as the same device; the local Claude Project, being roastery-bound, also stopped appearing). Nothing on the remote was affected — `git log` confirmed HEAD was still `804719a3` ("authelia max log level," 2026-09-06), never advanced. Recovered by exporting the full session context (including verbatim content for every lost fix) to a file, then reapplying every fix via a small idempotent Python script (`apply_repass_fixes.py`) run directly against a fresh checkout, rather than re-diagnosing anything. Lesson for next time: push repass/audit work before considering it "done," even when no execution has happened yet — a local-only fix is one reformat away from needing to be reconstructed from a chat transcript.
+
+
+## 2026-09-10 — percolator: Nextcloud brought up; two real bugs found and fixed (Docker network split, login-bounce loop)
+
+Continuing percolator's bring-up (silo already fully up) with the remaining apps. Nextcloud's install wizard failed immediately: `could not translate host name "postgres-nextcloud"`.
+
+**Root cause**: Compose's implicit-default-network behavior. `nextcloud`'s service block had an explicit `networks: [percolator_net]`, which — per Compose's own semantics — stops that service from also auto-joining the project's implicit `default` network unless `default` is listed too. `postgres-nextcloud` had no `networks:` key at all, so it only joined `default`. Neither service shared a network with the other; DNS resolution between them was never going to work. Confirmed via `docker network inspect` before proposing a fix, not assumed from the compose file alone.
+
+Two ways to fix this, both equally valid: add `default` to `nextcloud`'s networks list, or add `[percolator_net, default]` to `postgres-nextcloud`'s. User Penguin took the second option directly rather than the first one proposed — flagged transparently that this sacrifices `postgres-nextcloud`'s documented isolation from other percolator apps' databases (valkey, paperless, etc.), since it now sits on the same `percolator_net` bridge as everything else. Left as the user's deliberate tradeoff, not silently accepted.
+
+Once the DB connected, the install wizard skipped straight to a login screen with no way to know the auto-created admin credentials — clarified this is the image's own bring-up behavior (an admin account gets created during first-run using whatever `NEXTCLOUD_ADMIN_USER`/`NEXTCLOUD_ADMIN_PASSWORD` env vars are set, if any; those need to be in the compose file ahead of first boot, not discovered after the fact).
+
+**Second bug, found right after**: login worked, then bounced in a loop — `POST /login` → `303` → `GET /login?direct=1&user=...` → `200`, repeating. Root-caused via `docker exec -u www-data nextcloud grep ... config.php` returning completely empty for `trusted_proxies`/`overwriteprotocol`/`overwrite.host` — Nextcloud didn't know it was sitting behind Traefik's reverse proxy at all, so its own CSRF/redirect logic kept rejecting the proxied request's apparent origin. Fixed via the official `nextcloud/docker` image's documented direct env vars (confirmed against that image's own `reverse-proxy.config.php` source, not assumed): `TRUSTED_PROXIES` (percolator_net's bridge subnet, same CIDR-based approach used for Home Assistant's trusted-proxies setting later this same day), `OVERWRITEPROTOCOL: https`, `OVERWRITEHOST: nextcloud.${DOMAIN}`, `OVERWRITECLIURL: https://nextcloud.${DOMAIN}`.
+
+### Still open
+- `postgres-nextcloud`'s network-isolation tradeoff (see above) — revisit if this ever matters (e.g. a future app compromise blast-radius concern).
+- Paperless-ngx uses the same "own dedicated Postgres, needs a shared network with its app container" pattern as Nextcloud did — worth checking it didn't hit (or silently work around) the same default-network gap.
+
+## 2026-09-10 — percolator: Home Assistant UFW rules written (web UI + mDNS/SSDP discovery)
+
+Home Assistant runs `network_mode: host` (required for its Cast integration, per HA's own docs — already documented in `homeassistant/docker-compose.yml`'s comment). Host-network containers are governed by plain UFW rules on the INPUT chain, not `ufw-docker`'s `DOCKER-USER` chain — that chain only ever applies to genuinely Docker-*published* ports (`-p`/`ports:` mappings), which host-network containers never have. Reaffirmed this distinction explicitly before writing any rule, since it's easy to reach for the wrong mental model here.
+
+Rules added, LAN-scoped, each commented with what it's for:
+```
+sudo ufw allow from 192.168.0.0/24 to any port 8123 proto tcp comment 'Home Assistant web UI (host-network, LAN only)'
+sudo ufw allow from 192.168.0.0/24 to any port 5353 proto udp comment 'Home Assistant mDNS/zeroconf discovery (host-network)'
+sudo ufw allow from 192.168.0.0/24 to any port 1900 proto udp comment 'Home Assistant SSDP/UPnP discovery (host-network)'
+```
+
+### Still open
+- This LAN-only scoping turned out to be incomplete once Traefik started routing to HA from its own Docker bridge subnet — see the Traefik gateway-timeout entry further down, same day.
+
+## 2026-09-10 — roastery: dropped Headscale entirely; fixed WSL2 DNS to point at Pi-hole instead
+
+User Penguin's original ask was joining roastery to the fleet's self-hosted Headscale/Tailscale instance. Reconsidered mid-conversation once the actual purpose was examined: Headscale exists to give mobile/laptop devices a route back into the LAN from *outside* it. Roastery is a stationary desktop PC — "it's a CPU, so it's not moving" — so it never needs an off-LAN route; it just needs normal LAN-device DNS resolution for `*.${DOMAIN}` hostnames, the same as any other fleet node. Decision: skip Headscale for roastery entirely, just fix its DNS.
+
+WSL2's default NAT networking mode isolates its virtual network from the LAN by default (confirmed via Microsoft's own WSL docs) but is still reachable from the Windows host itself and can still egress outward — the fix needed was purely DNS, pointing roastery's WSL2 distro at Pi-hole (`192.168.0.10`) instead of whatever it inherited by default.
+
+Real mistake made and fixed live: set `wsl.conf`'s `[network] generateResolvConf=false` (per Microsoft Learn, needed so WSL stops overwriting a manually-set `/etc/resolv.conf` on every boot), wrote a static `/etc/resolv.conf` pointing at Pi-hole, then `chattr +i`'d it for extra safety. After a real `wsl --shutdown` + relaunch, `/etc/resolv.conf` didn't exist at all — DNS resolution broke completely (`Temporary failure in name resolution`). Root cause: WSL's init still attempted its own regeneration despite the config flag, and collided with the immutable flag in a way that left neither the old nor a new file intact. Fixed by recreating `/etc/resolv.conf` a second time *without* `chattr` — confirmed working, and later reconfirmed it survives a second, real `wsl --shutdown` restart cleanly on its own, `generateResolvConf=false` alone being sufficient.
+
+### Still open
+- None — this one closed clean, confirmed persistent across a real restart.
+
+## 2026-09-10 — Fleet-wide Pi-hole bug found via roastery: every hostname had a bogus AAAA `::` record
+
+While testing roastery's new DNS setup, `getent hosts nextcloud.${DOMAIN}` returned `::` instead of a real address — not a roastery-specific issue. `dig ... AAAA` confirmed Pi-hole itself was answering with a literal `::` for every single fleet hostname's AAAA record (~25+ hosts, confirmed via `docker exec pihole grep -ri "${DOMAIN}" /etc/pihole/ -r`).
+
+**Why this matters more than a normal wrong-answer**: the Linux kernel treats `connect()` to the unspecified IPv6 address `::` as a request for loopback (`::1`), not a routing failure. Any dual-stack client that tried AAAA-first would silently get redirected to its own loopback interface instead of failing over cleanly to the real IPv4 address — a strong root-cause candidate for other weird cross-host symptoms this project has hit (an earlier sieve curl/cert anomaly, and possibly the still-unresolved Komodo Basic Auth popup, below).
+
+**Original design intent, now understood to be broken**: `pihole-dns-bootstrap.sh` was deliberately generating a per-host `address=/${sub}.${DOMAIN}/::` entry alongside each real A record — presumably meant as a way to suppress AAAA lookups per-hostname, but `::` is not a "no answer" sentinel to a resolver, it's a real (if degenerate) address that gets returned and acted on.
+
+Researched two real fixes before picking one:
+- RFC 6666's IPv6 Discard-Only prefix (`0100::/64`) — read the RFC itself, which explicitly recommends *omitting* AAAA records rather than using this, and warns the prefix isn't guaranteed to actually discard packets and shouldn't be announced across AS boundaries. Ruled out.
+- dnsmasq's real `filter-AAAA` option (confirmed via Debian's dnsmasq man page: strips all AAAA records from every answer, fleet-wide) — adopted. No per-domain equivalent exists in dnsmasq, so this is global-only, which is fine since this fleet has no genuine IPv6 use anywhere.
+
+Pi-hole v6 (FTL v6.7) generates dnsmasq's actual runtime config entirely from `/etc/pihole/pihole.toml`'s `misc.dnsmasq_lines` array (a raw dnsmasq-config-line passthrough) — `/etc/dnsmasq.d/` is never scanned at all in v6, a v5-era pattern that no longer applies. Rewrote `pihole-dns-bootstrap.sh` to add one global `filter-AAAA` line via this mechanism instead of the old per-host `::` entries.
+
+User Penguin wrote their own fix attempt in parallel, restructured the same way, but with a bash syntax bug: a missing closing paren in an arithmetic expansion (`$((${#HOST_TARGETS[@]} + 1)` — needed a second `)`), causing bash to keep consuming subsequent text looking for a match and fail with `unexpected EOF while looking for matching `"'`. Corrected, `bash -n`-validated, delivered back. Also replaced the file's stale top-of-file comment block (which still described the old `::`-override rationale) with a pointer to the real story at the `FILTER_AAAA_LINE` definition.
+
+Confirmed fixed fleet-wide: re-ran the corrected script, then verified via `dig +short ... AAAA @192.168.0.10` and `getent hosts` from roastery — real A record only, no bogus AAAA.
+
+### Still open
+- The Komodo Basic Auth browser popup (`komodo.${DOMAIN}/login`) is still unresolved and was never retested after this fix — HAR analysis (below) had already ruled out server-side 401/WWW-Authenticate causes before this DNS bug was found, so a client-side `::`-loopback redirect during some background request was a live hypothesis. Worth a fresh retest now that this is fixed, before chasing browser-extension/TLS-client-cert theories further.
+
+## 2026-09-10 — Komodo Basic Auth popup: HAR analysis, server-side causes ruled out, still unresolved
+
+User Penguin uploaded a HAR capture from DevTools of the still-reproducing native browser Basic Auth popup on `komodo.${DOMAIN}/login`. Analyzed the full request/response set: zero 401 responses anywhere in the capture, and zero `WWW-Authenticate` headers on anything — meaning Traefik/Authelia/Komodo itself is not the one asking for Basic Auth credentials. That rules out every server-side explanation (a stray `ForwardAuth`/basic-auth Traefik middleware, Komodo's own auth config, Authelia misconfiguration) definitively; the prompt is coming from somewhere client-side — a browser extension, or a TLS client-certificate request being misread as Basic Auth.
+
+### Still open
+- Deferred twice by User Penguin this session in favor of finishing percolator/roastery bring-up first.
+- Incognito-mode retest (isolates most extensions) still not run/reported.
+- Now worth retesting fresh given the fleet-wide `::`/AAAA DNS bug fix above, found afterward — was a live candidate root cause for this exact symptom class and hadn't been ruled out when the HAR was captured.
+
+## 2026-09-10 — roastery: immich-machine-learning with NVIDIA GPU passthrough; Headscale-vs-Windows-Firewall decision
+
+Goal: `immich-machine-learning` (roastery, GPU-accelerated) reachable by `immich-server` (mochaPot). Immich's own docs are explicit that immich-ml "has no security measures whatsoever" (no auth, no API key) and needs something external restricting who can reach it.
+
+**GPU passthrough to WSL2**: Windows-side NVIDIA driver update only — explicitly must *not* install a Linux NVIDIA driver inside the WSL2 distro itself (confirmed via `docs.nvidia.com/cuda/wsl-user-guide`) — plus `wsl.exe --update`, verified via `nvidia-smi` inside WSL2. Hit one real time-cost along the way: a paste mishap where partial tab-completion (`cd st`) got concatenated with a pasted multi-line install command before Enter was pressed, producing `cd stsudo apt-get update && ...` as one line — `cd` failed ("too many arguments"), which broke the `&&` chain silently, so `ca-certificates curl gnupg2` never actually installed. This cascaded into `gpg: command not found` on an unrelated next line and a silently-empty NVIDIA apt repo registration. Fixed with a clean step-by-step redo, verifying each stage (`which gpg`, `cat` on the resulting `.list` file) before moving to the next, rather than trusting the paste.
+
+**Architecture discovery that changed the plan**: `docker info` (run from PowerShell, since `systemctl restart docker` inside the WSL2 distro failed with `Unit docker.service not found`) revealed roastery runs Docker Desktop for Windows with WSL2 integration, not a native Docker Engine inside the named distro — the real `dockerd` lives in Docker Desktop's own hidden VM, entirely separate from the distro's own filesystem/network namespace. Two real consequences: no `docker.service` unit exists inside that distro (expected, not a bug — all the earlier `nvidia-ctk`/toolkit work inside the distro had zero effect on the actual engine, which already ships its own built-in NVIDIA GPU support, confirmed via `docker info`'s own `Runtimes: ... nvidia runc` line); and any Linux-side firewall (UFW) configured inside that distro has **zero effect** on a Docker-Desktop-published port, since that traffic never traverses the distro's network namespace at all.
+
+Explicitly walked back an earlier own suggestion once this was confirmed: had proposed a plain UFW rule (scoped to mochaPot's LAN IP) to restrict access to immich-ml, before the Docker Desktop architecture was known — that would have silently protected nothing. The user-provided draft compose files' original plan (bind immich-ml's port to a Headscale tailnet address specifically, so only tailnet members could reach it) was correctly solving the real problem, just via a heavier mechanism than necessary for two stationary LAN boxes with no other tailnet need.
+
+**Decision** (User Penguin, once the Windows Firewall alternative was presented as functionally equivalent): Windows Firewall, not Headscale. `New-NetFirewallRule` scoped to mochaPot's LAN IP on port 3003, since Docker Desktop's port publishing does traverse the real Windows network stack (unlike the WSL2 distro's own netfilter). Flagged one real caveat: Windows Firewall allows a packet if *any* matching rule permits it, so a pre-existing broad Docker/vpnkit allow rule can silently defeat a narrow one — worth checking for those before assuming the new rule is actually restrictive.
+
+Both affected compose files rewritten to match: `roastery/immich-ml/docker-compose.yml` (port mapping simplified from a tailnet-bound `${ROASTERY_TAILNET_IP}:3003:3003` to a plain `3003:3003`, comment rewritten to explain the Windows Firewall rationale) and mochaPot's immich compose (`IMMICH_MACHINE_LEARNING_URL` changed from a `${ROASTERY_TAILNET_IP}` reference to `${ROASTERY_LAN_IP}`). Both YAML-validated before being called done.
+
+### Still open
+- `roastery/.env.local` and mochaPot's own env file both need `ROASTERY_LAN_IP` set to roastery's real LAN IP (replacing the old `ROASTERY_TAILNET_IP` placeholder) — not yet confirmed done.
+- `roastery/immich-ml`'s containers haven't actually been brought up yet (`docker compose up -d`), the Windows Firewall rule hasn't been confirmed actually in place, and mochaPot's Immich Admin UI → Machine Learning Settings → URL hasn't been pointed at it yet.
+- immich-ml's own known gap (job concurrency has no compose/env knob, must be set post-bring-up via immich-server's Admin UI) still applies, unchanged from when this container was first drafted.
+
+## 2026-09-10 — percolator: Home Assistant's Traefik gateway timeout — UFW rule didn't cover Traefik's own container subnet
+
+With Traefik's percolator instance now confirmed configured for Home Assistant (correct `loadbalancer.server.url=http://${PERCOLATOR_LAN_IP}:8123` label, required since Traefik's Docker provider can't auto-discover a container IP for a host-network container), `https://homeassistant.${DOMAIN}` still gateway-timed-out. `http://192.168.0.13:8123` worked fine directly.
+
+Diagnosis, each step confirmed against real output before moving to the next: `docker logs traefik` showed nothing new per request (clarified this is expected — Traefik's app log and its access log are separate, and `accessLog` wasn't configured to write anywhere `docker logs` would show, so "no update in logs" wasn't actually evidence of anything); `traefik/config/dynamic.yml` had zero homeassistant entries (ruling out file-provider routing, confirming this is label-based); a direct `curl -v --resolve homeassistant.${DOMAIN}:443:127.0.0.1 https://homeassistant.${DOMAIN}/` completed a fully successful TLS handshake (correct cert, correct domain — proving Traefik's router matched by SNI and the label config was right) then hung indefinitely with the request "completely sent off," requiring a manual Ctrl+C — the specific signature of a firewall silently dropping packets, not "nothing listening" or "wrong route."
+
+**Root cause, confirmed via `sudo ufw status verbose` before changing anything**: the 8123/tcp rule added earlier this session was scoped to `192.168.0.0/24` (the LAN) only. Traefik's own container lives on `percolator_net`, a separate Docker bridge subnet (`172.18.0.0/16`, confirmed via `docker network inspect percolator_net`) — its connection attempts to HA's host-network port never matched the LAN-scoped rule and were silently dropped by UFW's default-deny. This is governed by plain UFW, not `ufw-docker`'s `DOCKER-USER` chain, since HA has no Docker-published port at all (`network_mode: host`).
+
+Fix — additive, doesn't touch the existing LAN rule:
+```
+sudo ufw allow from 172.18.0.0/16 to any port 8123 proto tcp comment 'Home Assistant web UI -- percolator Traefik container'
+```
+Confirmed this resolved the gateway timeout.
+
+### Still open
+- Worth checking whether any other host-network app fronted by percolator's Traefik (or any other node's Traefik) has the same LAN-only-UFW-rule gap — this was found for Home Assistant specifically but the underlying mistake (scoping a host-network app's UFW rule to the LAN and forgetting the fronting Traefik's own container subnet) could easily repeat.
+
+## 2026-09-10 — Authelia OIDC: Home Assistant and Mealie clients actually brought up and debugged live
+
+Continuing the 2026-09-06/07 OIDC foundation work — these two apps' actual first-login attempts, the point every earlier OIDC entry flagged as "not yet tested."
+
+**Home Assistant**, via the `hass-oidc-auth` HACS component (already flagged alpha-stage, local login kept as fallback). Checked Authelia's own published provider-configuration doc for this component before writing anything: it recommends a **public client with PKCE** as the default (no client secret to generate, store, or rotate), confidential-client-with-hashed-secret as the alternative. Went with public+PKCE — the project's own recommendation, and one fewer secret to manage on a component that's already alpha-quality. Client block:
+```yaml
+clients:
+  - client_id: 'homeassistant'
+    client_name: 'Home Assistant'
+    public: true
+    require_pkce: true
+    pkce_challenge_method: 'S256'
+    redirect_uris:
+      - 'https://homeassistant.${DOMAIN}/auth/oidc/callback'
+```
+HA-side setup is UI-only (Settings → Devices & Services → Add Integration → "OpenID Connect/SSO Authentication"), discovery URL pointed at `https://authelia.${DOMAIN}/.well-known/openid-configuration`. HA's own "Trust X-Forwarded-For"/trusted-proxies setting (Settings → Network) also needed configuring since traffic now arrives via Traefik — set to `percolator_net`'s subnet (`172.18.0.0/16`), the same CIDR just opened in UFW above. Confirmed done by User Penguin; end-to-end login flow not yet explicitly re-confirmed working after the Traefik-timeout fix above, but nothing else is known-outstanding for this app.
+
+**Mealie** — a real multi-bug saga, three genuinely separate root causes hit back-to-back on the same login attempt:
+
+1. **DNS/config-value error at OIDC discovery**: Mealie's own startup log showed the OIDC config as fully set, but the login attempt threw `httpx.ConnectError: [Errno -5] No address associated with hostname` inside authlib's `load_server_metadata()` — failing before any HTTP request completed, i.e. a hostname resolution failure against whatever `OIDC_CONFIGURATION_URL` was pointed at. User Penguin found and fixed this themselves (a wrong URL value) before further diagnosis was needed.
+2. **`invalid_client: Client authentication failed`** at the token-exchange step (`POST /api/oidc/token` → 401) — happening *after* a fully successful authorize step (valid code, correct redirect), meaning `client_id`/`redirect_uri` were both fine and this was specifically about how the client authenticates itself. Spent real effort ruling out a hash/plaintext secret mismatch: confirmed Mealie's Authelia client uses a **plaintext** `client_secret` (not this fleet's usual pbkdf2-sha512 hash pattern used for Komodo etc.), then confirmed via `md5sum` checksums taken independently on both sieve (the configured value) and mochaPot (`docker exec mealie sh -c 'printf "%s" "$OIDC_CLIENT_SECRET" | md5sum'`) that the two secrets were **byte-for-byte identical** — yet the error persisted.
+3. A side quest opened in parallel: Mealie's own docs flagged a real breaking change (`OIDC_REQUIRES_EMAIL_VERIFICATION`, defaults to `true`) that fails logins from any IdP not emitting `email_verified`. Checked Authelia's own OIDC-claims docs (claim is emitted automatically once the `email` scope is granted and the user has an email address in the backend) — but this fleet's Authelia uses an LDAP (LLDAP) backend, not the file-based `users_database.yml` initially assumed, and the account's email was confirmed already set there. Ruled out as the cause; the earlier assumption about which backend was in use was corrected mid-investigation, not before.
+
+**Actual root cause, found via Authelia's own FAQ, not guessed**: RFC 6749 §2.3.1 requires the client ID and secret to be URL-encoded (`application/x-www-form-urlencoded`) before being packed into the `client_secret_basic` HTTP Basic Authorization header. Authlib (Mealie's OAuth client library) doesn't perform this encoding. The secret in use had been generated via `openssl rand -base64 32` — base64's alphabet includes `+`, `/`, and `=`, all of which are reserved characters requiring encoding. Authelia decodes the header expecting URL-encoded input, gets a raw unencoded value instead, and the comparison fails — even though the two ends hold the *identical* underlying secret string, which is exactly why the checksum comparison in step 2 came back matching but the login still failed: this is a wire-transport encoding bug, not a stored-value mismatch. Documented precisely in Authelia's own integration FAQ.
+
+Fixed by regenerating the secret with `openssl rand -hex 32` instead — hex output uses only `[0-9a-f]`, all unreserved characters, sidestepping the entire encoding-ambiguity class rather than trying to encode around it. Set identically in both `configuration.yaml` (sieve) and Mealie's env (mochaPot), both containers restarted. Confirmed working end to end.
+
+**Unrelated real bug caught along the way**: Mealie's own Site Settings admin page flagged "Server Side Base URL" red — `BASE_URL` was still the container default (`http://localhost:8080`), which would have silently broken any server-generated link (password-reset emails, webhooks, shared-recipe URLs) once anything actually used one. Added `BASE_URL: https://mealie.${DOMAIN}` to the compose file's environment block — same category of bug as Nextcloud's `OVERWRITECLIURL` gap from earlier this same day.
+
+### Still open
+- This is Mealie's *second* distinct OIDC-login saga in this project (see 2026-09-07's "client secret did not match" entry above, root-caused to a `sudo`/file-ownership bug in `generate-secrets.sh`) — worth remembering as a pattern: this app's OIDC integration has now broken twice for two completely unrelated reasons. If it breaks a third time, check both known causes (file-ownership/render-pipeline staleness, and secret-charset/URL-encoding) before assuming a new one.
+- Worth deciding fleet-wide whether OIDC client secrets should be generated with `openssl rand -hex` instead of `-base64` from now on, specifically for any client using `client_secret_basic` — avoids this whole bug class proactively rather than per-incident. Not yet decided or applied to other apps' existing secrets.
+- The still-open default-account cleanup flagged when this was first raised (Mealie's `changeme@example.com` account) — not yet rotated/deleted; User Penguin was still logging in with it as of this session's testing.
+- Authelia OIDC client login for the remaining apps from the 2026-09-06 rollout list (Vikunja, Immich, FreshRSS, Actual Budget, Paperless-ngx, Vaultwarden, Komodo, Jellyfin) still hasn't been exercised against a real login — same "config written, never tested" state flagged back on 2026-09-06.

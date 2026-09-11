@@ -291,7 +291,7 @@ identity_providers:
           # hass-oidc-auth's own convention, not HA core's -- re-verify
           # against that component's README at install time, it has no
           # Authelia-published guide.
-          - 'https://homeassistant.${DOMAIN}/auth/hass-oidc-auth/callback'
+          - 'https://homeassistant.${DOMAIN}/auth/oidc/callback'
         scopes: ['openid', 'profile', 'email', 'groups']
         response_types: ['code']
         grant_types: ['authorization_code']
